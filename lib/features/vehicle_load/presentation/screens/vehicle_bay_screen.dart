@@ -194,7 +194,7 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
     final slotPkgs = _packagesBySlot(stops);
     final stopsById = _stopsById(stops);
 
-    Widget bay(SpatialSlotType type, {bool exit = false}) {
+    Widget bay(SpatialSlotType type) {
       final slot = SpatialSlot.fromType(type);
       return Expanded(
         child: _buildSlotBayCard(
@@ -202,7 +202,6 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
           packages: slotPkgs[type] ?? [],
           stopsById: stopsById,
           isDark: isDark,
-          isHighPriorityExit: exit,
         ),
       );
     }
@@ -267,38 +266,10 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
           // Row 2: Portas (Immediate Access - Loaded LAST, Unloaded FIRST)
           Row(
             children: [
-              bay(SpatialSlotType.portaTraseira, exit: true),
+              bay(SpatialSlotType.portaTraseira),
               const SizedBox(width: 8),
-              bay(SpatialSlotType.portaLateral, exit: true),
+              bay(SpatialSlotType.portaLateral),
             ],
-          ),
-
-          const SizedBox(height: 12),
-
-          // Rear Exit Ramp Indicator
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            decoration: BoxDecoration(
-              color: AppColors.statusSuccess.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppColors.statusSuccess.withValues(alpha: 0.5)),
-            ),
-            child: const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.output, size: 18, color: AppColors.statusSuccess),
-                SizedBox(width: 8),
-                Text(
-                  'PORTA TRASEIRA E LATERAL (PRIMEIRA DESCARGA)',
-                  style: TextStyle(
-                    color: AppColors.statusSuccess,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.8,
-                  ),
-                ),
-              ],
-            ),
           ),
         ],
       ),
@@ -310,7 +281,6 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
     required List<PackageItem> packages,
     required Map<String, DeliveryStop> stopsById,
     required bool isDark,
-    bool isHighPriorityExit = false,
   }) {
     final label = _slotLabel(slot);
     final int totalPackages = packages.length;
@@ -347,7 +317,7 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
                 Container(
                   width: 8,
                   height: 8,
-                  decoration: BoxDecoration(color: slot.visualColor, shape: BoxShape.circle),
+                  decoration: BoxDecoration(color: AppColors.primaryBlue, shape: BoxShape.circle),
                 ),
                 const SizedBox(width: 6),
                 Expanded(
@@ -374,15 +344,15 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                        color: slot.visualColor.withValues(alpha: 0.2),
+                        color: AppColors.primaryBlue,
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
                         'Parada #$n',
-                        style: TextStyle(
+                        style: const TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w800,
-                          color: slot.visualColor,
+                          color: Colors.white,
                         ),
                       ),
                     ),
@@ -413,7 +383,7 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
                 style: const TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w700,
-                  color: AppColors.statusSuccess,
+                  color: AppColors.primaryBlue,
                 ),
               ),
             ] else ...[
@@ -511,7 +481,7 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
               width: 36,
               height: 36,
               decoration: BoxDecoration(
-                color: slot.visualColor,
+                color: AppColors.primaryBlue,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Center(
@@ -707,7 +677,7 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
               : '$code não está no manifesto.',
         ),
         backgroundColor:
-            pkg != null ? AppColors.statusSuccess : AppColors.statusDanger,
+            pkg != null ? AppColors.primaryBlue : AppColors.statusDanger,
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 3),
       ),
@@ -759,7 +729,7 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
                     width: 14,
                     height: 14,
                     decoration: BoxDecoration(
-                      color: slot.visualColor,
+                      color: AppColors.primaryBlue,
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -893,7 +863,7 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
                                   : Icons.inventory_2_outlined,
                               size: 18,
                               color: pkg.status == PackageStatus.loaded
-                                  ? AppColors.statusSuccess
+                                  ? AppColors.primaryBlue
                                   : AppColors.primaryBlueLight,
                             ),
                             const SizedBox(width: 10),
