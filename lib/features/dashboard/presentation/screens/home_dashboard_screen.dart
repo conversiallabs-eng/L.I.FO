@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/models/route_step.dart';
 import '../../../../core/utils/lifo_calculator.dart';
 import '../../../route_manifest/domain/models/delivery_stop.dart';
 import '../../../route_manifest/domain/models/package_item.dart';
@@ -264,10 +265,16 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   String? _lastLegTargetStopId;
   LatLng? _lastLegFrom;
 
-  // HUD do topo estilo Waze (exibe parada alvo, endereço e distância real)
-  bool _hudVisible = false;        // controla fade-in/out do HUD superior
-  Timer? _hudHideTimer;            // timer de auto-ocultar o HUD
-  double _lastHudDist = -1;        // última distância que gerou exibição
+  // Turn-by-turn do OSRM p/ o HUD estilo Waze (curva/rotatória + km de rua).
+  List<RouteStep> _legSteps = [];
+  List<int> _legStepIndices = [];   // índice na polyline de cada step
+  List<double> _legCumMeters = [];  // distância acumulada de rua por ponto
+  int _legClosestIdx = 0;           // ponto da polyline mais perto do GPS
+  double _legRemainingMeters = -1;  // rua restante até a parada (-1 = sem dado)
+
+  // HUD do topo estilo Waze (exibe manobra, rua e distância real de rua)
+  bool _hudVisible = false;        // visível durante toda a navegação
+  Timer? _hudHideTimer;            // timer de auto-ocultar fora de navegação
 
   @override
   void initState() {
@@ -1351,51 +1358,201 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       if (!mounted) return;
 
       if (leg != null && leg.points.isNotEmpty) {
+        final steps = leg.steps;
+        final cum = _cumulativeMeters(leg.points);
+        final indices = _mapStepsToPolyline(leg.points, steps);
         setState(() {
           _legPolyline = leg.points;
-          _lastHudDist = -1;
+          _legSteps = steps;
+          _legCumMeters = cum;
+          _legStepIndices = indices;
+          _legClosestIdx = 0;
+          _legRemainingMeters = cum.isNotEmpty ? cum.last : leg.distance;
         });
         _showManeuverHud();
       } else {
         setState(() {
           _legPolyline = [from, targetPoint];
+          _legSteps = [];
+          _legStepIndices = [];
+          _legCumMeters = [];
+          _legClosestIdx = 0;
+          _legRemainingMeters = -1;
         });
       }
     } catch (_) {
       if (mounted) {
         setState(() {
           _legPolyline = [from, targetPoint];
+          _legSteps = [];
+          _legStepIndices = [];
+          _legCumMeters = [];
+          _legClosestIdx = 0;
+          _legRemainingMeters = -1;
         });
       }
     }
   }
 
-  /// Exibe o HUD de manobra por alguns segundos (auto-oculta como Waze)
+  /// Distância acumulada de rua (m) ponto a ponto da polyline.
+  List<double> _cumulativeMeters(List<LatLng> points) {
+    final cum = List<double>.filled(points.length, 0.0);
+    for (int i = 1; i < points.length; i++) {
+      cum[i] = cum[i - 1] +
+          LifoCalculator.calculateDistanceMeters(
+            points[i - 1].latitude,
+            points[i - 1].longitude,
+            points[i].latitude,
+            points[i].longitude,
+          );
+    }
+    return cum;
+  }
+
+  /// Índice na polyline onde cada manobra acontece (busca progressiva:
+  /// manobras vêm na ordem da rota, então o cursor só anda p/ frente).
+  List<int> _mapStepsToPolyline(List<LatLng> points, List<RouteStep> steps) {
+    final indices = <int>[];
+    int cursor = 0;
+    for (final step in steps) {
+      final loc = step.location;
+      if (loc == null || points.isEmpty) {
+        indices.add(-1);
+        continue;
+      }
+      int best = cursor;
+      double bestD = double.infinity;
+      for (int i = cursor; i < points.length; i++) {
+        final d = LifoCalculator.calculateDistanceMeters(
+          loc.latitude,
+          loc.longitude,
+          points[i].latitude,
+          points[i].longitude,
+        );
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      }
+      cursor = best;
+      indices.add(best);
+    }
+    return indices;
+  }
+
+  /// Ponto da polyline mais próximo do GPS (janela ao redor do último para
+  /// ser barato a cada fix; varredura total se o GPS saltou >150 m).
+  int _closestPolylineIndex(List<LatLng> points, LatLng pos, int hint) {
+    if (points.isEmpty) return 0;
+    double bestD = double.infinity;
+    int best = hint.clamp(0, points.length - 1);
+    final from = max(0, hint - 10);
+    final to = min(points.length, hint + 60);
+    for (int i = from; i < to; i++) {
+      final d = LifoCalculator.calculateDistanceMeters(
+        pos.latitude,
+        pos.longitude,
+        points[i].latitude,
+        points[i].longitude,
+      );
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    }
+    if (bestD > 150) {
+      for (int i = 0; i < points.length; i++) {
+        final d = LifoCalculator.calculateDistanceMeters(
+          pos.latitude,
+          pos.longitude,
+          points[i].latitude,
+          points[i].longitude,
+        );
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      }
+    }
+    return best;
+  }
+
+  /// Avança o progresso de rua a cada fix do GPS (chamado antes do rebuild,
+  /// então o HUD lê valores frescos sem setState extra).
+  void _refreshLegProgress(LatLng pos) {
+    if (_legPolyline.length < 2 || _legCumMeters.length != _legPolyline.length) {
+      return;
+    }
+    _legClosestIdx = _closestPolylineIndex(_legPolyline, pos, _legClosestIdx);
+    final idx = _legClosestIdx.clamp(0, _legCumMeters.length - 1);
+    _legRemainingMeters = max(0.0, _legCumMeters.last - _legCumMeters[idx]);
+  }
+
+  /// Próxima manobra à frente (>25 m): step + metros de rua até ela.
+  /// Null quando não há steps (offline) — o HUD usa o fallback de destino.
+  ({RouteStep step, double metersTo})? _currentManeuver() {
+    if (_legSteps.isEmpty ||
+        _legStepIndices.length != _legSteps.length ||
+        _legCumMeters.isEmpty) {
+      return null;
+    }
+    final cur = _legClosestIdx.clamp(0, _legCumMeters.length - 1);
+    for (int i = 0; i < _legSteps.length; i++) {
+      final si = _legStepIndices[i];
+      if (si < 0) continue;
+      final d = _legCumMeters[si.clamp(0, _legCumMeters.length - 1)] - _legCumMeters[cur];
+      if (d > 25) return (step: _legSteps[i], metersTo: d);
+    }
+    // Tudo para trás: chegando — mostra o último step (normalmente arrive).
+    final remaining = _legRemainingMeters < 0 ? 0.0 : _legRemainingMeters;
+    return (step: _legSteps.last, metersTo: remaining);
+  }
+
+  static String _formatRoadDistance(double meters) {
+    if (meters < 0) return '';
+    if (meters < 950) return '${meters.round()} m';
+    return '${(meters / 1000.0).toStringAsFixed(1)} km';
+  }
+
+  /// Exibe o HUD de manobra. Navegando, fica fixo como no Waze (sem
+  /// auto-ocultar); fora de navegação, some após 6s como antes.
   void _showManeuverHud({bool resetTimer = true}) {
     if (!mounted) return;
-    setState(() => _hudVisible = true);
-    if (resetTimer) {
-      _hudHideTimer?.cancel();
+    _hudHideTimer?.cancel();
+    if (!_hudVisible) {
+      setState(() => _hudVisible = true);
+    }
+    if (resetTimer && !_isNavigating) {
       _hudHideTimer = Timer(const Duration(seconds: 6), () {
         if (mounted) setState(() => _hudVisible = false);
       });
     }
   }
 
-  /// Atualiza o HUD durante a navegação conforme aproximação real da parada
+  /// Zera navegação + HUD + progresso de rua (sem rota não há o que guiar).
+  void _resetNavigationState() {
+    _hudHideTimer?.cancel();
+    if (!mounted) return;
+    setState(() {
+      _isNavigating = false;
+      _courseUp = false;
+      _selectedStopIndex = 0;
+      _legPolyline = [];
+      _lastLegTargetStopId = null;
+      _legSteps = [];
+      _legStepIndices = [];
+      _legCumMeters = [];
+      _legClosestIdx = 0;
+      _legRemainingMeters = -1;
+      _hudVisible = false;
+    });
+  }
+
+  /// Atualiza o progresso de rua + mantém o HUD visível durante a navegação.
   void _updateManeuverHud(LatLng pos, DeliveryStop targetStop) {
     if (!_isNavigating) return;
-    final dist = LifoCalculator.calculateDistanceMeters(
-      pos.latitude,
-      pos.longitude,
-      targetStop.latitude,
-      targetStop.longitude,
-    );
-    // Auto-exibe o HUD quando o motorista estiver a menos de 250 metros da parada alvo
-    if (dist < 250 && (_lastHudDist - dist).abs() > 40) {
-      _lastHudDist = dist;
-      _showManeuverHud();
-    }
+    _refreshLegProgress(pos);
+    if (!_hudVisible) _showManeuverHud();
   }
 
 
@@ -2892,21 +3049,47 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   /// HUD de navegação superior estilo Waze (na cor azul).
   /// Exibe dados reais da parada alvo (número, destinatário, endereço e distância GPS).
   /// Aparece temporariamente ao iniciar ou aproximar e some com fade suave.
+  /// HUD estilo Waze: próxima manobra (curva/rotatória/rua) + distância
+  /// REAL de rua até a parada. Sem steps (offline), cai no fallback de destino.
   Widget _buildManeuverHud({DeliveryStop? targetStop}) {
     if (targetStop == null) return const SizedBox.shrink();
 
+    final maneuver = _currentManeuver();
+
+    // Distância de rua restante (ou linha reta no fallback offline).
     String distanceText = '';
-    if (_currentLocation != null) {
+    if (maneuver != null && _legRemainingMeters >= 0) {
+      distanceText = _formatRoadDistance(_legRemainingMeters);
+    } else if (_currentLocation != null) {
       final meters = LifoCalculator.calculateDistanceMeters(
         _currentLocation!.latitude,
         _currentLocation!.longitude,
         targetStop.latitude,
         targetStop.longitude,
       );
-      if (meters < 1000) {
-        distanceText = '${meters.round()} m';
+      distanceText = _formatRoadDistance(meters);
+    }
+
+    // Linha principal e secundária do HUD.
+    IconData icon = Icons.navigation_rounded;
+    String mainLine = targetStop.recipientName;
+    String? subLine =
+        targetStop.address.isNotEmpty ? targetStop.address : null;
+    if (maneuver != null) {
+      final step = maneuver.step;
+      icon = step.icon;
+      final arriving = step.maneuver == ManeuverType.arrive &&
+          _legRemainingMeters >= 0 &&
+          _legRemainingMeters < 60;
+      if (arriving) {
+        mainLine = 'Chegando ao destino';
+        subLine = targetStop.address.isNotEmpty ? targetStop.address : null;
       } else {
-        distanceText = '${(meters / 1000.0).toStringAsFixed(1)} km';
+        mainLine = step.label;
+        final toManeuver = _formatRoadDistance(maneuver.metersTo);
+        subLine = step.streetName.isNotEmpty
+            ? '${step.streetName} • em $toManeuver'
+            : 'em $toManeuver';
       }
     }
 
@@ -2938,8 +3121,8 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
               color: Colors.white.withValues(alpha: 0.22),
               shape: BoxShape.circle,
             ),
-            child: const Icon(
-              Icons.navigation_rounded,
+            child: Icon(
+              icon,
               color: Colors.white,
               size: 20,
             ),
@@ -2983,19 +3166,19 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                 ),
                 const SizedBox(height: 1),
                 Text(
-                  targetStop.recipientName,
+                  mainLine,
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                if (targetStop.address.isNotEmpty) ...[
+                if (subLine != null && subLine.isNotEmpty) ...[
                   const SizedBox(height: 1),
                   Text(
-                    targetStop.address,
+                    subLine,
                     style: const TextStyle(
                       color: Color(0xFFBFDBFE),
                       fontSize: 10.5,
@@ -3651,13 +3834,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       if (mounted) {
         final current = ref.read(manifestControllerProvider).currentVersion;
         if (current == null || current.stops.isEmpty) {
-          setState(() {
-            _isNavigating = false;
-            _courseUp = false;
-            _selectedStopIndex = 0;
-            _legPolyline = [];
-            _lastLegTargetStopId = null;
-          });
+          _resetNavigationState();
         } else {
           _fitToCurrentManifest();
         }
@@ -3696,13 +3873,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         });
         final current = ref.read(manifestControllerProvider).currentVersion;
         if (current == null || current.stops.isEmpty) {
-          setState(() {
-            _isNavigating = false;
-            _courseUp = false;
-            _selectedStopIndex = 0;
-            _legPolyline = [];
-            _lastLegTargetStopId = null;
-          });
+          _resetNavigationState();
         } else {
           _fitToCurrentManifest();
         }

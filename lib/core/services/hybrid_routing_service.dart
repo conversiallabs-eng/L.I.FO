@@ -272,6 +272,17 @@ class HybridRoutingService {
 
       final maneuver = RouteStep.fromOsrm(type, modifier);
 
+      // Coordenada da manobra (p/ o HUD saber ONDE é a curva/rotatória).
+      LatLng? location;
+      final loc = maneuverMap['location'] as List<dynamic>?;
+      if (loc != null && loc.length >= 2) {
+        final lng = (loc[0] as num?)?.toDouble();
+        final lat = (loc[1] as num?)?.toDouble();
+        if (lng != null && lat != null) {
+          location = LatLng(lat, lng);
+        }
+      }
+
       // Ignora passos de chegada com distância 0 (último step vazio do OSRM)
       if (maneuver == ManeuverType.arrive && distance < 1) {
         result.add(RouteStep(
@@ -279,6 +290,7 @@ class HybridRoutingService {
           distanceMeters: distance,
           streetName: streetName,
           roundaboutExit: exit,
+          location: location,
         ));
         break;
       }
@@ -288,6 +300,7 @@ class HybridRoutingService {
         distanceMeters: distance,
         streetName: streetName,
         roundaboutExit: exit,
+        location: location,
       ));
     }
     return result;

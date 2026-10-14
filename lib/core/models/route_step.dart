@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
 
 /// Tipos de manobra mapeados do OSRM (type + modifier)
 enum ManeuverType {
@@ -26,12 +27,16 @@ class RouteStep {
   final double distanceMeters;
   final String streetName;
   final int roundaboutExit; // 0 se não for rotatória
+  /// Onde a manobra acontece (maneuver.location do OSRM, [lng, lat]).
+  /// Null em steps antigos/offline — nesse caso o HUD usa fallback.
+  final LatLng? location;
 
   const RouteStep({
     required this.maneuver,
     required this.distanceMeters,
     required this.streetName,
     this.roundaboutExit = 0,
+    this.location,
   });
 
   /// Ícone Flutter correspondente ao tipo de manobra
