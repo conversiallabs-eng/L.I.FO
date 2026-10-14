@@ -1,10 +1,10 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../controllers/auth_controller.dart';
 import '../../data/services/asaas_payment_service.dart';
 import 'my_account_screen.dart';
+import 'pix_payment_screen.dart';
 
 class SubscriptionRenewalScreen extends ConsumerStatefulWidget {
   const SubscriptionRenewalScreen({super.key});
@@ -26,20 +26,7 @@ class SubscriptionRenewalScreen extends ConsumerStatefulWidget {
 class _SubscriptionRenewalScreenState
     extends ConsumerState<SubscriptionRenewalScreen> {
   bool _isLoadingPix = false;
-  bool _isVerifying = false;
   AsaasPixChargeResponse? _pixResponse;
-
-  /// Decodifica o QR base64 vindo do Asaas (com ou sem prefixo data URI).
-  ImageProvider? _qrImage() {
-    final b64 = _pixResponse?.qrCodeBase64;
-    if (b64 == null || b64.isEmpty) return null;
-    try {
-      final clean = b64.contains(',') ? b64.split(',').last : b64;
-      return MemoryImage(base64Decode(clean));
-    } catch (_) {
-      return null;
-    }
-  }
 
   String _formatExpiryDate(DateTime dt) {
     final day = dt.day.toString().padLeft(2, '0');
@@ -53,6 +40,8 @@ class _SubscriptionRenewalScreenState
     return diff < 0 ? 0 : diff;
   }
 
+  /// Gera o PIX e abre o takeover animado. A ativação é automática
+  /// (polling no app + webhook no servidor) — sem botão manual.
   Future<void> _generatePixCharge() async {
     setState(() {
       _isLoadingPix = true;
@@ -66,13 +55,15 @@ class _SubscriptionRenewalScreenState
         amount: 19.90,
       );
 
-      if (mounted) {
-        setState(() {
-          _pixResponse = pix;
-          _isLoadingPix = false;
-        });
-        HapticFeedback.lightImpact();
-      }
+      if (!mounted) return;
+      setState(() {
+        _pixResponse = pix;
+        _isLoadingPix = false;
+      });
+      HapticFeedback.lightImpact();
+      final paid = await PixPaymentScreen.open(context, pix);
+      // Pagou lá dentro: a assinatura já foi renovada — volta sozinho.
+      if (paid && mounted) Navigator.of(context).pop();
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -119,101 +110,6 @@ class _SubscriptionRenewalScreenState
     if (d.isEmpty) return 'não cadastrado';
     if (d.length != 11) return '*** (incompleto)';
     return '***.***.${d.substring(6, 9)}-${d.substring(9)}';
-  }
-
-  void _copyPixCode(String code) {
-    Clipboard.setData(ClipboardData(text: code));
-    HapticFeedback.selectionClick();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Row(
-          children: [
-            Icon(Icons.check_circle, color: Colors.white, size: 20),
-            SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Código PIX copiado! Cole no aplicativo do seu banco.',
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-              ),
-            ),
-          ],
-        ),
-        backgroundColor: const Color(0xFF059669),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        duration: const Duration(seconds: 3),
-      ),
-    );
-  }
-
-  Future<void> _confirmAndRenew() async {
-    setState(() {
-      _isVerifying = true;
-    });
-    HapticFeedback.mediumImpact();
-
-    // Só renova com pagamento CONFIRMADO no Asaas (ou liberado via webhook).
-    bool paid = false;
-    if (_pixResponse != null) {
-      paid = await AsaasPaymentService.instance.checkPaymentStatus(
-        paymentId: _pixResponse!.paymentId,
-      );
-    }
-
-    if (!mounted) return;
-    setState(() {
-      _isVerifying = false;
-    });
-
-    if (!paid) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Row(
-            children: [
-              Icon(Icons.hourglass_bottom, color: Colors.white, size: 20),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Pagamento ainda não identificado. Pague o PIX e aguarde ~1 min antes de confirmar.',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: Color(0xFFD97706),
-          behavior: SnackBarBehavior.floating,
-          duration: Duration(seconds: 5),
-        ),
-      );
-      return;
-    }
-
-    await ref.read(authControllerProvider.notifier).renewSubscription();
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Row(
-            children: [
-              Icon(Icons.verified, color: Colors.white, size: 22),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  '🎉 Assinatura renovada com sucesso! +30 dias ativados.',
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-                ),
-              ),
-            ],
-          ),
-          backgroundColor: const Color(0xFF2563EB),
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          duration: const Duration(seconds: 4),
-        ),
-      );
-
-      Navigator.of(context).pop();
-    }
   }
 
   @override
@@ -660,7 +556,7 @@ class _SubscriptionRenewalScreenState
             ),
             const SizedBox(height: 24),
 
-            // ── ÁREA DE PAGAMENTO PIX ──────────────────────────────────────────
+            // ── ÁREA DE PAGAMENTO PIX (takeover animado + ativação automática) ──
             if (_pixResponse == null) ...[
               SizedBox(
                 height: 52,
@@ -696,231 +592,43 @@ class _SubscriptionRenewalScreenState
                 ),
               ),
             ] else ...[
-              // CONTAINER COM O CÓDIGO PIX GERADO
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: cardBg,
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(
-                    color: const Color(0xFF059669),
-                    width: 1.5,
+              SizedBox(
+                height: 52,
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.qr_code_2, color: Colors.white, size: 22),
+                  label: const Text(
+                    'Ver QR do PIX',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFF059669).withValues(alpha: 0.1),
-                      blurRadius: 12,
-                      offset: const Offset(0, 4),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF059669),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
                     ),
-                  ],
+                    elevation: 2,
+                  ),
+                  onPressed: () async {
+                    final paid = await PixPaymentScreen.open(context, _pixResponse!);
+                    if (paid && context.mounted) Navigator.of(context).pop();
+                  },
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.pix, color: Color(0xFF059669), size: 24),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Cobrança PIX Gerada',
-                          style: TextStyle(
-                            color: titleColor,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ],
+              ),
+              const SizedBox(height: 8),
+              Center(
+                child: TextButton(
+                  onPressed: _isLoadingPix ? null : _generatePixCharge,
+                  child: const Text(
+                    'Gerar um novo PIX',
+                    style: TextStyle(
+                      color: Color(0xFF64748B),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
                     ),
-                    const SizedBox(height: 12),
-
-                    // QR CODE DO PIX (base64 vindo do Asaas)
-                    Builder(
-                      builder: (context) {
-                        final qr = _qrImage();
-                        if (qr == null) {
-                          return const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  color: Color(0xFF059669),
-                                  strokeWidth: 2,
-                                ),
-                              ),
-                              SizedBox(width: 10),
-                              Text('Gerando QR Code...'),
-                            ],
-                          );
-                        }
-                        return TweenAnimationBuilder<double>(
-                          tween: Tween(begin: 0.7, end: 1.0),
-                          duration: const Duration(milliseconds: 600),
-                          curve: Curves.easeOutBack,
-                          builder: (context, scale, child) =>
-                              Transform.scale(scale: scale, child: child),
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: const Color(0xFF059669),
-                                width: 1.5,
-                              ),
-                            ),
-                            child: Image(
-                              image: qr,
-                              width: 210,
-                              height: 210,
-                              fit: BoxFit.contain,
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Escaneie com o app do banco ou use o copia e cola:',
-                      style: TextStyle(
-                        color: subColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // Badge do Valor
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF059669).withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Text(
-                        'Valor: R\$ 19,90 • Validade: 24h',
-                        style: TextStyle(
-                          color: Color(0xFF059669),
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // CAMPO COPIA E COLA PIX
-                    Text(
-                      'Código PIX Copia e Cola:',
-                      style: TextStyle(
-                        color: subColor,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: borderColor),
-                      ),
-                      child: SelectableText(
-                        _pixResponse!.copyAndPastePix,
-                        style: TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 11,
-                          color: titleColor,
-                        ),
-                        maxLines: 2,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // BOTÃO COPIAR CÓDIGO
-                    SizedBox(
-                      width: double.infinity,
-                      height: 44,
-                      child: ElevatedButton.icon(
-                        icon: const Icon(Icons.copy, size: 18, color: Colors.white),
-                        label: const Text(
-                          'Copiar Código PIX',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF2563EB),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                        onPressed: () => _copyPixCode(_pixResponse!.copyAndPastePix),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    const Divider(),
-                    const SizedBox(height: 10),
-
-                    // INSTRUÇÕES DE PAGAMENTO
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _buildInstructionStep('1', 'Copie o código PIX acima.'),
-                        _buildInstructionStep('2', 'Abra o aplicativo do seu banco.'),
-                        _buildInstructionStep('3', 'Escolha a opção PIX Copia e Cola.'),
-                        _buildInstructionStep('4', 'Confirme o pagamento de R\$ 19,90.'),
-                      ],
-                    ),
-                    const SizedBox(height: 18),
-
-                    // BOTÃO DE CONFIRMAÇÃO / SIMULAÇÃO
-                    SizedBox(
-                      width: double.infinity,
-                      height: 48,
-                      child: ElevatedButton.icon(
-                        icon: _isVerifying
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  color: Colors.white,
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.check_circle_outline, color: Colors.white, size: 20),
-                        label: Text(
-                          _isVerifying
-                              ? 'Confirmando Pagamento...'
-                              : 'Já Realizei o Pagamento / Confirmar',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF059669),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        onPressed: _isVerifying ? null : _confirmAndRenew,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ],
@@ -1039,41 +747,4 @@ class _SubscriptionRenewalScreenState
     );
   }
 
-  Widget _buildInstructionStep(String number, String text) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Container(
-            width: 20,
-            height: 20,
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              color: Color(0xFF2563EB),
-            ),
-            child: Center(
-              child: Text(
-                number,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              text,
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
