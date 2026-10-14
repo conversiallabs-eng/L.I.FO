@@ -3011,6 +3011,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     final seen = <SpatialSlotType>{};
     final slots = <SpatialSlot>[];
     for (final pkg in stop.packages) {
+      // Só conta local que o usuário realmente atribuiu no baú. O local
+      // automático derivado do LIFO não significa que o volume foi colocado.
+      if (!pkg.slotUserAssigned) continue;
       if (seen.add(pkg.spatialSlot.type)) slots.add(pkg.spatialSlot);
     }
     return slots;
@@ -3053,19 +3056,15 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
               decoration: BoxDecoration(
-                color: slot.visualColor.withValues(alpha: 0.14),
+                color: AppColors.primaryBlue,
                 borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color: slot.visualColor.withValues(alpha: 0.55),
-                  width: 1,
-                ),
               ),
               child: Text(
                 SlotNamesNotifier.labelOf(names, slot),
-                style: TextStyle(
+                style: const TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w800,
-                  color: isDark ? Colors.white : const Color(0xFF0F172A),
+                  color: Colors.white,
                 ),
               ),
             ),

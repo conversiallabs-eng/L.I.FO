@@ -99,6 +99,66 @@ void main() {
       expect(optimized.last.spatialSlot.type, SpatialSlotType.portaLateral);
     });
 
+    test('PackageItem preserva slotUserAssigned no toMap/fromMap', () {
+      const pkg = PackageItem(
+        id: 'p-1',
+        manifestVersionId: 'v-0',
+        stopId: 'stop-1',
+        barcode: 'LF-100',
+        description: 'Carga',
+        weightKg: 1.0,
+        spatialSlot: SpatialSlot.portaTraseira,
+      );
+
+      // Por padrão é local automático (não colocado pelo usuário).
+      expect(pkg.slotUserAssigned, isFalse);
+      expect(PackageItem.fromMap(pkg.toMap()).slotUserAssigned, isFalse);
+
+      final assigned = pkg.copyWith(
+        slotUserAssigned: true,
+        spatialSlot: SpatialSlot.meioEsquerdo,
+      );
+      final restored = PackageItem.fromMap(assigned.toMap());
+      expect(restored.slotUserAssigned, isTrue);
+      expect(restored.spatialSlot.type, SpatialSlotType.meioEsquerdo);
+    });
+
+    test('LIFO não sobrescreve o local colocado pelo usuário no baú', () {
+      final stops = [
+        DeliveryStop(
+          id: 'stop-1',
+          manifestVersionId: 'v-0',
+          sequenceIndex: 1,
+          recipientName: 'Destino A',
+          address: 'Rua A, 100',
+          latitude: -23.5505,
+          longitude: -46.6333,
+          spatialSlot: SpatialSlot.meioEsquerdo,
+          packages: [
+            const PackageItem(
+              id: 'p-1',
+              manifestVersionId: 'v-0',
+              stopId: 'stop-1',
+              barcode: 'LF-100',
+              description: 'Carga',
+              weightKg: 1.0,
+              spatialSlot: SpatialSlot.meioEsquerdo,
+              slotUserAssigned: true,
+            ),
+          ],
+        ),
+      ];
+
+      final optimized = LifoCalculator.optimizeRouteStops(stops);
+      // A parada 1 receberia Porta Traseira, mas o volume foi colocado à mão
+      // no Meio Esquerdo — o LIFO não pode sobrescrever essa escolha.
+      expect(
+        optimized.first.packages.first.spatialSlot.type,
+        SpatialSlotType.meioEsquerdo,
+      );
+      expect(optimized.first.packages.first.slotUserAssigned, isTrue);
+    });
+
     test('Immutable Manifest Version 0 is preserved as original', () {
       final v0 = ManifestVersion(
         id: 'v0-uuid',

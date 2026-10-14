@@ -31,7 +31,7 @@ class AppDatabase {
 
     return await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: _onCreate,
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -49,6 +49,15 @@ class AppDatabase {
           // v4: coluna cidade/UF no perfil.
           try {
             await db.execute('ALTER TABLE user_profiles ADD COLUMN city_uf TEXT');
+          } catch (_) {}
+        }
+        if (oldVersion < 5) {
+          // v5: distingue o local atribuído pelo usuário (bipagem no baú) do
+          // local derivado automaticamente pela ordem LIFO da rota.
+          try {
+            await db.execute(
+              'ALTER TABLE package_items ADD COLUMN slot_user_assigned INTEGER NOT NULL DEFAULT 0',
+            );
           } catch (_) {}
         }
       },
@@ -97,6 +106,7 @@ class AppDatabase {
         weight_kg REAL NOT NULL,
         volume_m3 REAL NOT NULL,
         spatial_slot TEXT NOT NULL,
+        slot_user_assigned INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL,
         scanned_at TEXT,
         FOREIGN KEY (manifest_version_id) REFERENCES manifest_versions (id) ON DELETE CASCADE,
@@ -412,6 +422,7 @@ class AppDatabase {
     final db = await database;
     final values = <String, Object?>{
       'spatial_slot': spatialSlotLabel,
+      'slot_user_assigned': 1,
     };
     if (markLoaded) {
       values['status'] = PackageStatus.loaded.name;

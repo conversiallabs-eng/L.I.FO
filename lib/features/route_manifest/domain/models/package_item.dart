@@ -18,6 +18,10 @@ class PackageItem {
   final PackageStatus status;
   final DateTime? scannedAt;
 
+  /// True quando o local do baú foi atribuído pelo usuário (bipagem ou
+  /// digitação). False quando é só o local automático derivado do LIFO.
+  final bool slotUserAssigned;
+
   const PackageItem({
     required this.id,
     required this.manifestVersionId,
@@ -29,6 +33,7 @@ class PackageItem {
     required this.spatialSlot,
     this.status = PackageStatus.pendingLoad,
     this.scannedAt,
+    this.slotUserAssigned = false,
   });
 
   PackageItem copyWith({
@@ -42,6 +47,7 @@ class PackageItem {
     SpatialSlot? spatialSlot,
     PackageStatus? status,
     DateTime? scannedAt,
+    bool? slotUserAssigned,
   }) {
     return PackageItem(
       id: id ?? this.id,
@@ -54,6 +60,7 @@ class PackageItem {
       spatialSlot: spatialSlot ?? this.spatialSlot,
       status: status ?? this.status,
       scannedAt: scannedAt ?? this.scannedAt,
+      slotUserAssigned: slotUserAssigned ?? this.slotUserAssigned,
     );
   }
 
@@ -67,6 +74,7 @@ class PackageItem {
       'weight_kg': weightKg,
       'volume_m3': volumeM3,
       'spatial_slot': spatialSlot.label,
+      'slot_user_assigned': slotUserAssigned ? 1 : 0,
       'status': status.name,
       'scanned_at': scannedAt?.toIso8601String(),
     };
@@ -84,6 +92,7 @@ class PackageItem {
       spatialSlot: SpatialSlot.fromString(map['spatial_slot'] as String),
       status: PackageStatus.values.byName(map['status'] as String? ?? 'pendingLoad'),
       scannedAt: map['scanned_at'] != null ? DateTime.parse(map['scanned_at'] as String) : null,
+      slotUserAssigned: ((map['slot_user_assigned'] as num?)?.toInt() ?? 0) == 1,
     );
   }
 }

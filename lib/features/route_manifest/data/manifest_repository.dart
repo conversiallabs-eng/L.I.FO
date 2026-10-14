@@ -449,6 +449,7 @@ class ManifestRepository {
       spatialSlot: slot,
       status: PackageStatus.loaded,
       scannedAt: DateTime.now(),
+      slotUserAssigned: true,
     );
   }
 

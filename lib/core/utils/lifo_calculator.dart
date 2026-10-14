@@ -276,6 +276,8 @@ class LifoCalculator {
       );
 
       final updatedPackages = ordered[i].packages.map((pkg) {
+        // Local já definido pelo usuário no baú prevalece sobre o LIFO.
+        if (pkg.slotUserAssigned) return pkg;
         return pkg.copyWith(spatialSlot: spatialSlot);
       }).toList();
 
