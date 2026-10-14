@@ -46,17 +46,49 @@ class _SubscriptionRenewalScreenState
     HapticFeedback.mediumImpact();
 
     final user = ref.read(authControllerProvider).user;
-    final pix = await AsaasPaymentService.instance.createPixCharge(
-      user: user,
-      amount: 19.90,
-    );
+    try {
+      final pix = await AsaasPaymentService.instance.createPixCharge(
+        user: user,
+        amount: 19.90,
+      );
 
-    if (mounted) {
-      setState(() {
-        _pixResponse = pix;
-        _isLoadingPix = false;
-      });
-      HapticFeedback.lightImpact();
+      if (mounted) {
+        setState(() {
+          _pixResponse = pix;
+          _isLoadingPix = false;
+        });
+        HapticFeedback.lightImpact();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingPix = false;
+        });
+        final msg = e.toString().replaceFirst('Exception: ', '');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: [
+                const Icon(Icons.error_outline,
+                    color: Colors.white, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    msg,
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w600, fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+            backgroundColor: const Color(0xFFDC2626),
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10)),
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
     }
   }
 
@@ -91,19 +123,45 @@ class _SubscriptionRenewalScreenState
     });
     HapticFeedback.mediumImpact();
 
+    // Só renova com pagamento CONFIRMADO no Asaas (ou liberado via webhook).
+    bool paid = false;
     if (_pixResponse != null) {
-      await AsaasPaymentService.instance.checkPaymentStatus(
+      paid = await AsaasPaymentService.instance.checkPaymentStatus(
         paymentId: _pixResponse!.paymentId,
       );
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _isVerifying = false;
+    });
+
+    if (!paid) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.hourglass_bottom, color: Colors.white, size: 20),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Pagamento ainda não identificado. Pague o PIX e aguarde ~1 min antes de confirmar.',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Color(0xFFD97706),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 5),
+        ),
+      );
+      return;
     }
 
     await ref.read(authControllerProvider.notifier).renewSubscription();
 
     if (mounted) {
-      setState(() {
-        _isVerifying = false;
-      });
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Row(

@@ -28,11 +28,11 @@ class MyAccountScreen extends ConsumerWidget {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     final nameCtrl = TextEditingController(text: user.name);
-    final cpfCtrl = TextEditingController(text: user.cpf ?? '094.218.459-12');
-    final rgCtrl = TextEditingController(text: user.rg ?? '5.482.910-SSP/SC');
-    final phoneCtrl = TextEditingController(text: user.phone ?? '(48) 99182-3401');
-    final addressCtrl = TextEditingController(text: user.billingAddress ?? 'Rodovia José Carlos Daux, 4633 - Saco Grande');
-    final cepCtrl = TextEditingController(text: user.billingCep ?? '88032-005');
+    final cpfCtrl = TextEditingController(text: user.cpf ?? '');
+    final rgCtrl = TextEditingController(text: user.rg ?? '');
+    final phoneCtrl = TextEditingController(text: user.phone ?? '');
+    final addressCtrl = TextEditingController(text: user.billingAddress ?? '');
+    final cepCtrl = TextEditingController(text: user.billingCep ?? '');
 
     showDialog(
       context: context,
@@ -302,7 +302,9 @@ class MyAccountScreen extends ConsumerWidget {
                   _buildProfileRow(
                     icon: Icons.badge_outlined,
                     label: 'CPF',
-                    value: user.cpf ?? '094.218.459-12',
+                    value: (user.cpf == null || user.cpf!.isEmpty)
+                        ? 'Toque em editar e cadastre seu CPF'
+                        : user.cpf!,
                     titleColor: titleColor,
                     subColor: subColor,
                   ),

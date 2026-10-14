@@ -18,6 +18,12 @@ serve(async (req) => {
 
     const { user_id, customer_name, customer_email, customer_cpf, value, description } = await req.json();
 
+    // Asaas prod valida CPF/CNPJ: envia só dígitos
+    const cpfDigits = String(customer_cpf ?? "").replace(/\D/g, "");
+    if (cpfDigits.length !== 11 && cpfDigits.length !== 14) {
+      throw new Error("CPF/CNPJ inválido. Atualize o cadastro antes de gerar o PIX.");
+    }
+
     // Proxy de IP fixo (Hostinger 46.202.182.73) — contorna whitelist do Asaas.
     // Se ASAAS_PROXY_URL estiver setada, todo tráfego sai pelo IP fixo.
     // Ex: ASAAS_PROXY_URL=https://seudominio.com/asaas-proxy.php
@@ -66,7 +72,7 @@ serve(async (req) => {
         body: JSON.stringify({
           name: customer_name || "Cliente LIFO",
           email: customer_email,
-          cpfCnpj: customer_cpf || undefined,
+          cpfCnpj: cpfDigits,
         }),
       });
       const createCusData = await createCusRes.json();

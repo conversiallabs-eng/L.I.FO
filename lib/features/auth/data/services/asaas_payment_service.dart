@@ -43,19 +43,29 @@ class AsaasPaymentService {
   static const String _kSupabaseEdgeFunctionUrl = 'https://sjbmweuszwxbkdimbwdg.supabase.co/functions/v1/create-asaas-pix-charge';
 
   /// Cria uma cobrança PIX no valor de R$ 19,90 via Asaas / Supabase
+  /// Lança [Exception] com a mensagem real do Asaas em caso de falha
+  /// (sem fallback falso: PIX falso faz o usuário pagar e não liberar).
   Future<AsaasPixChargeResponse> createPixCharge({
     required UserProfile user,
     double amount = 19.90,
   }) async {
+    final cpfDigits = (user.cpf ?? '').replaceAll(RegExp(r'\D'), '');
+    if (cpfDigits.length != 11 && cpfDigits.length != 14) {
+      throw Exception(
+        'CPF/CNPJ inválido. Atualize seu CPF em Minha Conta antes de gerar o PIX.',
+      );
+    }
+
     final payload = {
       'user_id': user.id,
       'customer_name': user.name.isNotEmpty ? user.name : 'Cliente LIFO',
       'customer_email': user.email,
-      'customer_cpf': user.cpf ?? '',
+      'customer_cpf': cpfDigits,
       'value': amount,
       'description': 'Assinatura LIFO Pro - 30 Dias',
     };
 
+    String? lastError;
     try {
       // 1. Tenta chamar Supabase Edge Function se inicializado
       if (SupabaseService.instance.isInitialized) {
@@ -66,47 +76,60 @@ class AsaasPaymentService {
           );
           if (res.status == 200 && res.data != null) {
             final data = res.data is String ? jsonDecode(res.data) : res.data;
-            return AsaasPixChargeResponse.fromJson(data as Map<String, dynamic>);
+            final map = data as Map<String, dynamic>;
+            if (map['error'] != null) {
+              lastError = map['error'] as String?;
+            } else {
+              return AsaasPixChargeResponse.fromJson(map);
+            }
+          } else {
+            final data = res.data is String
+                ? jsonDecode(res.data)
+                : res.data;
+            lastError = (data is Map ? data['error'] as String? : null) ??
+                'Asaas recusou a cobrança (HTTP ${res.status}).';
           }
         } catch (e) {
-          debugPrint('Supabase Edge Function Asaas indisponível, tentando HTTP direto: $e');
+          lastError = '$e';
+          debugPrint('Supabase Edge Function Asaas falhou: $e');
         }
+      } else {
+        lastError = 'Sem conexão com o servidor. Tente novamente.';
       }
 
       // 2. Tenta HTTP POST direto caso a Edge Function esteja rodando como endpoint genérico
-      final httpRes = await http.post(
-        Uri.parse(_kSupabaseEdgeFunctionUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          if (SupabaseService.instance.isInitialized)
-            'Authorization': 'Bearer ${Supabase.instance.client.auth.currentSession?.accessToken ?? ""}',
-        },
-        body: jsonEncode(payload),
-      ).timeout(const Duration(seconds: 8));
+      if (lastError != null) {
+        try {
+          final httpRes = await http.post(
+            Uri.parse(_kSupabaseEdgeFunctionUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              if (SupabaseService.instance.isInitialized)
+                'Authorization':
+                    'Bearer ${Supabase.instance.client.auth.currentSession?.accessToken ?? ""}',
+            },
+            body: jsonEncode(payload),
+          ).timeout(const Duration(seconds: 8));
 
-      if (httpRes.statusCode == 200) {
-        final data = jsonDecode(httpRes.body) as Map<String, dynamic>;
-        return AsaasPixChargeResponse.fromJson(data);
+          if (httpRes.statusCode == 200) {
+            final data = jsonDecode(httpRes.body) as Map<String, dynamic>;
+            if (data['error'] == null) {
+              return AsaasPixChargeResponse.fromJson(data);
+            }
+            lastError = data['error'] as String?;
+          } else {
+            lastError =
+                'Asaas recusou a cobrança (HTTP ${httpRes.statusCode}).';
+          }
+        } catch (e) {
+          debugPrint('Erro de conexão com API Asaas: $e.');
+        }
       }
     } catch (e) {
-      debugPrint('Erro de conexão com API Asaas: $e. Usando payload de contingência.');
+      lastError = '$e';
     }
 
-    // 3. Fallback Gracioso: gera payload VÁLIDO de contingência para testes e prototipação
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final paymentId = 'pay_asaas_$timestamp';
-
-    // Gera um código PIX padrão válido formato EMV QRCPS (Copia e Cola PIX)
-    const mockPixCopy = '00020126580014br.gov.bcb.pix0136lifo-logistica-asaas-1990-pix-key0212LIFO PRO 30D520400005303986540519.905802BR5916LIFO LOGISTICA6013FLORIANOPOLIS62070503***6304E8A2';
-
-    return AsaasPixChargeResponse(
-      paymentId: paymentId,
-      copyAndPastePix: mockPixCopy,
-      qrCodeBase64: null, // Será gerado via Canvas/Widget no UI se null
-      value: amount,
-      expirationDate: DateTime.now().add(const Duration(hours: 24)),
-      status: 'PENDING',
-    );
+    throw Exception(lastError ?? 'Não foi possível gerar a cobrança PIX.');
   }
 
   /// Consulta o status da cobrança PIX no Asaas
