@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -26,6 +27,18 @@ class _SubscriptionRenewalScreenState
   bool _isLoadingPix = false;
   bool _isVerifying = false;
   AsaasPixChargeResponse? _pixResponse;
+
+  /// Decodifica o QR base64 vindo do Asaas (com ou sem prefixo data URI).
+  ImageProvider? _qrImage() {
+    final b64 = _pixResponse?.qrCodeBase64;
+    if (b64 == null || b64.isEmpty) return null;
+    try {
+      final clean = b64.contains(',') ? b64.split(',').last : b64;
+      return MemoryImage(base64Decode(clean));
+    } catch (_) {
+      return null;
+    }
+  }
 
   String _formatExpiryDate(DateTime dt) {
     final day = dt.day.toString().padLeft(2, '0');
@@ -623,6 +636,64 @@ class _SubscriptionRenewalScreenState
                           ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 12),
+
+                    // QR CODE DO PIX (base64 vindo do Asaas)
+                    Builder(
+                      builder: (context) {
+                        final qr = _qrImage();
+                        if (qr == null) {
+                          return const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  color: Color(0xFF059669),
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                              SizedBox(width: 10),
+                              Text('Gerando QR Code...'),
+                            ],
+                          );
+                        }
+                        return TweenAnimationBuilder<double>(
+                          tween: Tween(begin: 0.7, end: 1.0),
+                          duration: const Duration(milliseconds: 600),
+                          curve: Curves.easeOutBack,
+                          builder: (context, scale, child) =>
+                              Transform.scale(scale: scale, child: child),
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(
+                                color: const Color(0xFF059669),
+                                width: 1.5,
+                              ),
+                            ),
+                            child: Image(
+                              image: qr,
+                              width: 210,
+                              height: 210,
+                              fit: BoxFit.contain,
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Escaneie com o app do banco ou use o copia e cola:',
+                      style: TextStyle(
+                        color: subColor,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     const SizedBox(height: 12),
 
