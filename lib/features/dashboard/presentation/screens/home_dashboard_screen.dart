@@ -397,7 +397,12 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
             'Com ela azul, a câmera anda nas costas do cursor. Arrastou o mapa? Ela volta sozinha em segundos.',
       ),
     ]);
-    await AppTutorial.showOnce(context, AppTutorial.homeSeenKey, steps);
+    // Replay (botão da Ajuda) fura a flag "já visto"; 1º login usa showOnce.
+    if (force) {
+      await CoachTutorial.show(context, steps);
+    } else {
+      await AppTutorial.showOnce(context, AppTutorial.homeSeenKey, steps);
+    }
   }
 
   Future<void> _startNavCoach() async {
@@ -4018,9 +4023,11 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         ),
         actions: [
           TextButton(
-            onPressed: () {
-              Navigator.pop(dCtx);
-              _startHomeCoach(force: true);
+            onPressed: () async {
+              Navigator.pop(dCtx); // fecha o diálogo
+              Navigator.of(ctx).pop(); // fecha o drawer p/ o holofote ver a tela
+              await Future.delayed(const Duration(milliseconds: 350));
+              if (mounted) _startHomeCoach(force: true);
             },
             child: const Text('Ver tutorial', style: TextStyle(color: Color(0xFF2563EB), fontWeight: FontWeight.w700)),
           ),
