@@ -239,9 +239,11 @@ class AuthController extends StateNotifier<AuthState> {
       }
 
       // Sem login no Supabase, sem entrada (única fonte da verdade).
+      // Mensagem cita os dois casos: conta inexistente ou senha errada.
       state = state.copyWith(
         isLoading: false,
-        errorMessage: 'E-mail ou senha incorretos.',
+        errorMessage:
+            'Conta não encontrada ou senha incorreta. Confira os dados ou toque em Cadastre-se.',
       );
       return false;
     } catch (_) {
