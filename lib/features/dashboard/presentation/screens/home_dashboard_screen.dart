@@ -3955,7 +3955,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                               Navigator.of(context).pop();
                               await ref.read(authControllerProvider.notifier).logout();
                               if (context.mounted) {
-                                LoginScreen.open(context);
+                                // A home raiz já virou Login pelo estado;
+                                // garante que não restou rota por cima.
+                                Navigator.of(context)
+                                    .popUntil((route) => route.isFirst);
                               }
                             },
                           ),

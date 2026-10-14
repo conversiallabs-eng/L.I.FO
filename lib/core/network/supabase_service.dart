@@ -113,6 +113,7 @@ class SupabaseService {
   // ─── PERFIL DE USUÁRIO ────────────────────────────────────────────────────
 
   /// Salva ou atualiza o perfil do usuário na tabela `user_profiles` do Supabase.
+  /// ATENÇÃO: envia SOMENTE colunas que existem na tabela (sem fcm_token).
   Future<bool> upsertUserProfile(UserProfile profile) async {
     if (!_isInitialized || currentUser == null) return false;
     try {
@@ -130,7 +131,6 @@ class SupabaseService {
         'avatar_url': profile.avatarUrl,
         'plan': profile.plan,
         'expires_at': profile.expiresAt.toIso8601String(),
-        'fcm_token': profile.fcmToken,
         'updated_at': DateTime.now().toIso8601String(),
       });
       return true;
@@ -191,7 +191,19 @@ class SupabaseService {
     }
   }
 
+  /// Nome amigável do plano a partir da linha da tabela `subscriptions`.
+  static String planDisplayName(Map<String, dynamic>? subscription) {
+    final t =
+        (subscription?['plan_type'] as String? ?? 'trial').toLowerCase();
+    if (t == 'pix_manual' || t == 'credit_card_auto') {
+      return 'Standard (Ativo)';
+    }
+    return 'Standard (Trial 30 Dias)';
+  }
+
   /// Cria ou atualiza uma assinatura no Supabase.
+  /// Mapeia os nomes amigáveis do app para as colunas/valores reais da
+  /// tabela `subscriptions` (plan_type, status com CHECK, price_cents).
   Future<bool> upsertSubscription({
     required String userId,
     required String plan,
@@ -200,13 +212,34 @@ class SupabaseService {
     String paymentMethod = 'manual',
   }) async {
     if (!_isInitialized) return false;
+    final planLower = plan.toLowerCase();
+    final isTrial =
+        status == 'trial' || status == 'trialing' || planLower.contains('trial');
+    // plan_type CHECK: trial | pix_manual | credit_card_auto
+    final planType = isTrial
+        ? 'trial'
+        : (paymentMethod == 'card' ? 'credit_card_auto' : 'pix_manual');
+    // status CHECK: active | past_due | canceled | expired | trialing
+    String dbStatus;
+    if (status == 'trial' || status == 'trialing') {
+      dbStatus = 'trialing';
+    } else if (status == 'cancelled' || status == 'canceled') {
+      dbStatus = 'canceled';
+    } else if (status == 'active' ||
+        status == 'expired' ||
+        status == 'past_due') {
+      dbStatus = status;
+    } else {
+      dbStatus = 'past_due';
+    }
     try {
       await _client.from('subscriptions').upsert({
         'user_id': userId,
-        'plan': plan,
+        'plan_type': planType,
+        'status': dbStatus,
+        'price_cents': isTrial ? 0 : 1990,
+        'starts_at': DateTime.now().toIso8601String(),
         'expires_at': expiresAt.toIso8601String(),
-        'status': status,
-        'payment_method': paymentMethod,
         'updated_at': DateTime.now().toIso8601String(),
       });
       return true;

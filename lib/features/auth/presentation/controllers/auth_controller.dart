@@ -218,7 +218,7 @@ class AuthController extends StateNotifier<AuthState> {
         final remoteProfile = await SupabaseService.instance.fetchUserProfile();
         final subscription = await SupabaseService.instance.fetchSubscription();
 
-        final plan = subscription?['plan'] as String? ?? 'Standard';
+        final plan = SupabaseService.planDisplayName(subscription);
         final expiresAt = DateTime.tryParse(
               subscription?['expires_at'] as String? ?? '',
             ) ??
@@ -370,17 +370,24 @@ class AuthController extends StateNotifier<AuthState> {
   Future<void> logout() async {
     HapticFeedback.lightImpact();
 
-    // Desloga no Supabase e no Google
-    await SupabaseService.instance.signOut();
-    await GoogleAuthService.instance.signOut();
+    // Desloga no Supabase e no Google (cada um isolado p/ nunca travar)
+    try {
+      await SupabaseService.instance.signOut();
+    } catch (_) {}
+    try {
+      await GoogleAuthService.instance.signOut();
+    } catch (_) {}
 
-    // Limpa sessão local
-    final guest = _guestProfile();
-    await AppDatabase.instance.saveUserProfile(guest);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_kUserPrefKey);
-
-    state = state.copyWith(user: guest);
+    // Limpa sessão local e volta p/ convidado mesmo se o banco falhar
+    try {
+      final guest = _guestProfile();
+      await AppDatabase.instance.saveUserProfile(guest);
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_kUserPrefKey);
+      state = state.copyWith(user: guest, isBooting: false);
+    } catch (_) {
+      state = state.copyWith(user: _guestProfile(), isBooting: false);
+    }
   }
 }
 

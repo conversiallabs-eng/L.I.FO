@@ -432,6 +432,8 @@ class MyAccountScreen extends ConsumerWidget {
                 onPressed: () async {
                   await ref.read(authControllerProvider.notifier).logout();
                   if (context.mounted) {
+                    // Volta para a raiz (tela de login) em vez de ficar parado
+                    Navigator.of(context).popUntil((route) => route.isFirst);
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('Você saiu da sua conta.')),
                     );
