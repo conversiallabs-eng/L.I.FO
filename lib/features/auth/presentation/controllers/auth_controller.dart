@@ -59,12 +59,12 @@ class AuthController extends StateNotifier<AuthState> {
   }
 
   // ─── CARREGAMENTO INICIAL ────────────────────────────────────────────────
+  // Única fonte da verdade: Supabase. Sem fallback local (SQLite/prefs)
+  // para nunca ressuscitar login apagado no servidor.
 
   Future<void> _loadProfile() async {
     try {
-      // 1. Prioridade: Supabase Auth — aguarda a recuperação da sessão
-      // (no cold start o Supabase restaura o token do storage de forma
-      // assíncrona; sem essa espera o app cai no login toda vez).
+      // Aguarda a recuperação da sessão (cold start restaura async).
       var supaUser = SupabaseService.instance.currentUser;
       if (supaUser == null) {
         // Tenta renovar sessão expirada com o refresh token salvo
@@ -79,39 +79,19 @@ class AuthController extends StateNotifier<AuthState> {
         supaUser = SupabaseService.instance.currentUser;
       }
       if (supaUser != null) {
-        // Busca perfil remoto no Supabase
         final remoteProfile = await SupabaseService.instance.fetchUserProfile();
         if (remoteProfile != null) {
-          await AppDatabase.instance.saveUserProfile(remoteProfile);
           state = state.copyWith(user: remoteProfile, isBooting: false);
           return;
         }
-      }
-
-      // 2. Fallback: SQLite local
-      final dbUser = await AppDatabase.instance.getUserProfile();
-      if (dbUser != null && dbUser.isLoggedIn) {
-        state = state.copyWith(user: dbUser, isBooting: false);
-        return;
-      }
-
-      // 3. Fallback final: SharedPreferences
-      final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(_kUserPrefKey);
-      if (raw != null) {
-        final map = jsonDecode(raw) as Map<String, dynamic>;
-        final profile = UserProfile.fromMap(map);
-        if (profile.isLoggedIn) {
-          state = state.copyWith(user: profile, isBooting: false);
-          await AppDatabase.instance.saveUserProfile(profile);
-          return;
-        }
+        // Sessão válida mas sem perfil no servidor: cai pro login.
       }
     } catch (_) {}
-    state = state.copyWith(isBooting: false);
+    state = state.copyWith(user: _guestProfile(), isBooting: false);
   }
 
-  // ─── PERSISTÊNCIA LOCAL + REMOTA ─────────────────────────────────────────
+  // ─── PERSISTÊNCIA ────────────────────────────────────────────────────────
+  // Espelho local mantido só como cache; leitura oficial é sempre Supabase.
 
   Future<void> _saveProfile(UserProfile profile) async {
     try {
@@ -151,7 +131,16 @@ class AuthController extends StateNotifier<AuthState> {
         name: name,
       );
 
-      final userId = supaUser?.id ?? 'usr_${DateTime.now().millisecondsSinceEpoch}';
+      // Sem conta no Supabase, sem cadastro (única fonte da verdade).
+      if (supaUser == null) {
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage: 'Não foi possível criar a conta no servidor.',
+        );
+        return false;
+      }
+
+      final userId = supaUser.id;
       final expiresAt = DateTime.now().add(const Duration(days: 30));
 
       final newUser = UserProfile(
@@ -249,20 +238,7 @@ class AuthController extends StateNotifier<AuthState> {
         return true;
       }
 
-      // Fallback offline: login local sem rede
-      final dbUser = await AppDatabase.instance.getUserProfile();
-      if (dbUser != null && dbUser.email == email.trim().toLowerCase()) {
-        final offline = dbUser.copyWith(isLoggedIn: true);
-        await AppDatabase.instance.saveUserProfile(offline);
-        state = state.copyWith(
-          user: offline,
-          isLoading: false,
-          successMessage: 'Login offline realizado.',
-        );
-        HapticFeedback.mediumImpact();
-        return true;
-      }
-
+      // Sem login no Supabase, sem entrada (única fonte da verdade).
       state = state.copyWith(
         isLoading: false,
         errorMessage: 'E-mail ou senha incorretos.',
