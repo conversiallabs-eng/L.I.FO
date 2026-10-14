@@ -289,8 +289,11 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
   }) {
     final label = _slotLabel(slot);
     final int totalPackages = packages.length;
-    final double totalWeight =
-        packages.fold(0.0, (acc, p) => acc + p.weightKg);
+    final bool hasKnownWeight = packages.any((p) => p.weightKg != null);
+    final double totalWeight = packages.fold(
+      0.0,
+      (acc, p) => acc + (p.weightKg ?? 0),
+    );
     final bool hasPackages = totalPackages > 0;
     final stopNumbers = <int>{};
     for (final p in packages) {
@@ -355,7 +358,10 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
               ),
               const SizedBox(height: 2),
               Text(
-                '${totalWeight.toStringAsFixed(1)} kg • Descarregar #${slot.unloadingOrder}',
+                // Sem peso no manifesto, mostra só o descarrega — sem "0.0 kg".
+                hasKnownWeight
+                    ? '${totalWeight.toStringAsFixed(1)} kg • Descarregar #${slot.unloadingOrder}'
+                    : 'Descarregar #${slot.unloadingOrder}',
                 style: TextStyle(
                   fontSize: 10.5,
                   fontWeight: FontWeight.w600,
@@ -1033,10 +1039,11 @@ class _SlotSheetState extends ConsumerState<_SlotSheet> {
               ],
             ),
           ),
-          Text(
-            '${pkg.weightKg} kg',
-            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
-          ),
+          if (pkg.weightKg != null)
+            Text(
+              '${pkg.weightKg} kg',
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+            ),
           IconButton(
             tooltip: 'Excluir do compartimento',
             visualDensity: VisualDensity.compact,

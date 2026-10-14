@@ -149,7 +149,7 @@ class _CargoScannerScreenState extends ConsumerState<CargoScannerScreen> {
       stopId: stop.id,
       barcode: barcode,
       description: 'Volume $barcode',
-      weightKg: 1.0,
+      weightKg: null,
     );
 
     if (!mounted) return;

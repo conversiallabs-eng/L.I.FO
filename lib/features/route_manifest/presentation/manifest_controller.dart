@@ -474,7 +474,7 @@ class ManifestNotifier extends StateNotifier<ManifestState> {
     required String stopId,
     required String barcode,
     required String description,
-    required double weightKg,
+    required double? weightKg,
   }) async {
     try {
       await _repository.addPackageToExistingStop(
@@ -712,7 +712,7 @@ class ManifestNotifier extends StateNotifier<ManifestState> {
       latitude: latitude,
       longitude: longitude,
       packages: [
-        NewPackageInput(barcode: code, description: 'Volume $code', weightKg: 1.0),
+        NewPackageInput(barcode: code, description: 'Volume $code', weightKg: null),
       ],
       startLat: startLat,
       startLng: startLng,

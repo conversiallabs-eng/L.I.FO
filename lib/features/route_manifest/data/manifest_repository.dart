@@ -23,7 +23,7 @@ typedef RouteCalculation = ({
 class NewPackageInput {
   final String barcode;
   final String description;
-  final double weightKg;
+  final double? weightKg;
 
   const NewPackageInput({
     required this.barcode,
@@ -394,7 +394,7 @@ class ManifestRepository {
     required String stopId,
     required String barcode,
     required String description,
-    required double weightKg,
+    required double? weightKg,
   }) async {
     final current = await _db.getCurrentVersion();
     if (current == null) throw Exception('Nenhum manifesto ativo.');

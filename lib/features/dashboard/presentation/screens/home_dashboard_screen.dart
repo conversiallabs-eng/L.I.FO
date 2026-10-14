@@ -2315,7 +2315,16 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     final int totalStops = stops.length;
     final int loadedCount = currentVersion?.loadedPackagesCount ?? 0;
     final int totalCount = currentVersion?.totalPackagesInStops ?? 0;
-    final double totalWeight = stops.fold(0.0, (acc, s) => acc + s.packages.fold(0.0, (pAcc, p) => pAcc + p.weightKg));
+    final double totalWeight = stops.fold(
+      0.0,
+      (acc, s) =>
+          acc + s.packages.fold(0.0, (pAcc, p) => pAcc + (p.weightKg ?? 0)),
+    );
+    // Só mostra peso se o manifesto trouxe algum — nada de kg inventado.
+    final bool hasKnownWeight =
+        stops.any((s) => s.packages.any((p) => p.weightKg != null));
+    final String weightSuffix =
+        hasKnownWeight ? ' • ${totalWeight.toStringAsFixed(1)} kg' : '';
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final sheetBg = isDark ? AppColors.carbonSurface : AppColors.lightSurface;
@@ -2402,8 +2411,8 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     final bool hasRealEta =
         isOnlineRouting && totalDurationSeconds > 0 && routeComputedAt != null;
     final String etaLine = hasRealEta
-        ? 'Chegada ≈ ${DateFormat('HH:mm').format(routeComputedAt.add(Duration(seconds: totalDurationSeconds.round())))} • $totalStops paradas • ${totalWeight.toStringAsFixed(1)} kg'
-        : '$totalStops paradas • ${totalWeight.toStringAsFixed(1)} kg • cálculo local';
+        ? 'Chegada ≈ ${DateFormat('HH:mm').format(routeComputedAt.add(Duration(seconds: totalDurationSeconds.round())))} • $totalStops paradas$weightSuffix'
+        : '$totalStops paradas$weightSuffix • cálculo local';
 
     final nextIdx = _nextPendingIndex(stops);
     final isRouteInProgress = stops.any((s) => s.status == StopStatus.completed || s.status == StopStatus.inTransit);

@@ -123,6 +123,25 @@ void main() {
       expect(restored.spatialSlot.type, SpatialSlotType.meioEsquerdo);
     });
 
+    test('PackageItem sem peso grava 0 na linha e volta como null', () {
+      const pkg = PackageItem(
+        id: 'p-nw',
+        manifestVersionId: 'v-0',
+        stopId: 'stop-1',
+        barcode: 'LF-500',
+        description: 'Sem peso',
+        spatialSlot: SpatialSlot.portaTraseira,
+      );
+
+      expect(pkg.weightKg, isNull);
+      // weight_kg é NOT NULL: 0 = desconhecido, e volta como null na leitura.
+      expect(pkg.toMap()['weight_kg'], 0);
+      expect(PackageItem.fromMap(pkg.toMap()).weightKg, isNull);
+
+      final weighed = pkg.copyWith(weightKg: 3.5);
+      expect(PackageItem.fromMap(weighed.toMap()).weightKg, 3.5);
+    });
+
     test('LIFO não sobrescreve o local colocado pelo usuário no baú', () {
       final stops = [
         DeliveryStop(
@@ -344,6 +363,75 @@ void main() {
       expect(resolved.items.length, 2);
       expect(resolved.items[0].barcode, 'ML-10-1-1');
       expect(resolved.items[1].barcode, 'ML-10-1-2');
+    });
+
+    test('Sem coluna de peso, o volume fica sem peso (não vira 1 kg)', () {
+      final rows = [
+        [
+          'Nº Pedido',
+          'Destinatário',
+          'Rua',
+          'Número',
+          'Cidade',
+          'UF',
+          'CEP',
+          'Produto',
+          'Qtd',
+        ],
+        [
+          'ML-20',
+          'Ana Souza',
+          'Rua A',
+          '10',
+          'Curitiba',
+          'PR',
+          '80000-000',
+          'Caixa',
+          '2',
+        ],
+      ];
+
+      final parsed = ManifestImportService.parseRows(rows);
+      expect(parsed.stops.first.items.first.weightKg, isNull);
+
+      final resolved = ManifestImportService.resolve(
+        parsed.stops.first,
+        -25.4,
+        -49.2,
+      );
+      expect(resolved.items.every((i) => i.weightKg == null), isTrue);
+    });
+
+    test('Com coluna de peso, o valor real do arquivo é lido', () {
+      final rows = [
+        [
+          'Nº Pedido',
+          'Destinatário',
+          'Rua',
+          'Número',
+          'Cidade',
+          'UF',
+          'CEP',
+          'Produto',
+          'Qtd',
+          'Peso',
+        ],
+        [
+          'ML-21',
+          'Ana Souza',
+          'Rua A',
+          '10',
+          'Curitiba',
+          'PR',
+          '80000-000',
+          'Caixa',
+          '1',
+          '12,5',
+        ],
+      ];
+
+      final parsed = ManifestImportService.parseRows(rows);
+      expect(parsed.stops.first.items.first.weightKg, 12.5);
     });
 
     test('readRows lê CSV com ponto-e-vírgula e latin1', () async {

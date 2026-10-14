@@ -23,7 +23,7 @@ class ImportedItem {
   final String barcodeBase;
   final String description;
   final int quantity;
-  final double weightKg;
+  final double? weightKg;
 
   const ImportedItem({
     required this.barcodeBase,
@@ -62,7 +62,7 @@ class ImportedStop {
 class ResolvedImportItem {
   final String barcode;
   final String description;
-  final double weightKg;
+  final double? weightKg;
 
   const ResolvedImportItem({
     required this.barcode,
@@ -328,9 +328,11 @@ class ManifestImportService {
     return n > 20 ? 20 : n;
   }
 
-  static double _parseWeight(String raw) {
+  /// Peso em kg do volume. Devolve `null` quando o arquivo não traz o peso:
+  /// melhor ficar desconhecido do que inventar 1 kg.
+  static double? _parseWeight(String raw) {
     final n = double.tryParse(raw.replaceAll(',', '.').replaceAll(RegExp(r'[^0-9.]'), ''));
-    if (n == null || n <= 0) return 1.0;
+    if (n == null || n <= 0) return null;
     return n;
   }
 

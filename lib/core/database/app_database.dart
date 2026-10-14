@@ -463,7 +463,7 @@ class AppDatabase {
     required String stopId,
     required String barcode,
     required String description,
-    required double weightKg,
+    required double? weightKg,
     required String spatialSlot,
   }) async {
     final db = await database;
@@ -475,7 +475,8 @@ class AppDatabase {
         'stop_id': stopId,
         'barcode': barcode,
         'description': description,
-        'weight_kg': weightKg,
+        // Coluna NOT NULL: 0 = peso desconhecido (manifesto sem peso).
+        'weight_kg': weightKg ?? 0,
         'volume_m3': 0.05,
         'spatial_slot': spatialSlot,
         'status': PackageStatus.loaded.name,  // já bipeado pelo scanner
