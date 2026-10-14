@@ -1,0 +1,137 @@
+﻿<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>L.I.F.O. — Otimizador Logístico feito por entregadores</title>
+<meta name="description" content="O L.I.F.O. importa teu manifesto, bipa cada pacote e monta o baú na ordem certa. 30 dias grátis.">
+<meta property="og:title" content="L.I.F.O. — Logística inteligente. Do baú à última entrega.">
+<meta property="og:url" content="https://lifo.com.br/">
+<style>
+:root{--blue:#0066FF;--ink:#0F172A;--mut:#475569;--bg:#F6F8FF;--line:#E2E8F0}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Segoe UI,Arial,sans-serif;color:var(--ink);line-height:1.6}
+.wrap{max-width:1080px;margin:0 auto;padding:0 20px}
+header{position:sticky;top:0;background:#fff;border-bottom:1px solid var(--line);z-index:10}
+nav{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;max-width:1080px;margin:0 auto}
+.logo{font-weight:800;font-size:22px}.logo span{color:var(--blue)}
+.links{display:flex;gap:18px;align-items:center}.links a{text-decoration:none;color:var(--mut);font-size:15px}
+.btn{display:inline-block;background:var(--blue);color:#fff;padding:12px 26px;border-radius:10px;text-decoration:none;font-weight:700}
+.btn.ghost{background:#fff;color:var(--blue);border:2px solid var(--blue)}
+.hero{background:var(--bg);padding:64px 0;text-align:center}
+.hero h1{font-size:clamp(30px,5vw,52px);line-height:1.15;margin:12px 0}
+.hero p{color:var(--mut);font-size:18px;max-width:640px;margin:0 auto 24px}
+.badges{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px;color:var(--mut);font-size:14px}
+section{padding:56px 0}.kicker{color:var(--blue);font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px}
+h2{font-size:clamp(24px,4vw,36px);margin:8px 0}.sub{color:var(--mut);max-width:640px}
+.grid{display:grid;gap:16px;margin-top:28px}.g3{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.card{border:1px solid var(--line);border-radius:14px;padding:22px;background:#fff}
+.card b.num{color:var(--blue);font-size:13px}.card h3{margin:6px 0;font-size:18px}.card p{color:var(--mut);font-size:15px}
+.stack{max-width:420px;margin:28px auto 0;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.slot{padding:12px 16px;border-top:1px solid var(--line);display:flex;justify-content:space-between;font-weight:700}
+.slot small{color:var(--mut);font-weight:400}.slot.first{background:var(--blue);color:#fff;border-top:0}.slot.first small{color:#DCE7FF}
+.route{display:flex;gap:10px;justify-content:center;margin-top:24px;flex-wrap:wrap}
+.stop{width:56px;height:56px;border-radius:50%;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:20px}
+.price{font-size:40px;font-weight:800}.price small{font-size:16px;color:var(--mut);font-weight:400}
+details{border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-top:12px}
+summary{font-weight:700;cursor:pointer}
+footer{background:var(--ink);color:#CBD5E1;padding:48px 0;margin-top:32px}
+footer a{color:#fff}form{display:grid;gap:10px;max-width:420px;margin-top:16px}
+input,textarea{padding:12px;border-radius:10px;border:1px solid var(--line);font-size:15px;width:100%}
+@media(max-width:640px){.links a:not(.btn){display:none}}
+</style>
+</head>
+<body>
+<header><nav>
+<div class="logo">L.I.F.O<span>.</span></div>
+<div class="links">
+<a href="#como">Como funciona</a><a href="#recursos">Recursos</a><a href="#planos">Planos</a><a href="#faq">FAQ</a>
+<a class="btn" href="#baixar">Baixar o app</a>
+</div></nav></header>
+<div class="hero"><div class="wrap">
+<div class="kicker">Logística inteligente. Do baú à última entrega.</div>
+<h1>Feito por entregadores,<br>pra quem entrega.</h1>
+<p>O L.I.F.O. importa teu manifesto, bipa cada pacote e monta o baú na ordem certa — por menos da metade do preço dos gringos.</p>
+<a class="btn" href="#baixar">Baixar o app</a>
+<div class="badges"><span>30 dias grátis</span><span>· Só Pix, sem cartão</span><span>· Em breve na Play Store</span></div>
+</div></div>
+<section><div class="wrap">
+<div class="kicker">Seu baú, na ordem certa LIFO</div>
+<h2>A primeira a sair fica por último no baú. O app mostra onde pôr cada caixa.</h2>
+<div class="stack">
+<div class="slot first"><span>Entrega 1 — PRIMEIRA A SAIR</span><small>porta do baú</small></div>
+<div class="slot"><span>Entrega 2 — PACOTE</span><small>&nbsp;</small></div>
+<div class="slot"><span>Entrega 3 — PACOTE</span><small>&nbsp;</small></div>
+<div class="slot"><span>Entrega 4 — PACOTE</span><small>&nbsp;</small></div>
+<div class="slot"><span>Entrega 5 — PACOTE</span><small>&nbsp;</small></div>
+<div class="slot"><span>Entrega 6 — PACOTE</span><small>fundo do baú</small></div>
+</div>
+<div class="kicker" style="margin-top:36px">Uma rota. Menos voltas.</div>
+<div class="route"><div class="stop">1</div><div class="stop">2</div><div class="stop">3</div><div class="stop">4</div><div class="stop">5</div></div>
+</div></section>
+<section style="background:var(--bg)"><div class="wrap">
+<div class="kicker">Por que a gente existe</div>
+<h2>A gente rodava com app caro que não entendia a nossa rua. Então construímos o nosso.</h2>
+<div class="grid g3">
+<div class="card"><b class="num">01</b><h3>Preço justo</h3><p>R$ 19,90 no Pix. Sem dólar, sem plano anual amarrado.</p></div>
+<div class="card"><b class="num">02</b><h3>Bipou, achou</h3><p>Bipa o pacote e o app mostra na hora a parada e o rastreio. Acabou o pacotinho perdido no fundo do baú.</p></div>
+<div class="card"><b class="num">03</b><h3>Rota com memória</h3><p>Otimizou e não gostou? A rota antiga continua salva, volta com 1 toque. Nada se perde.</p></div>
+</div></div></section>
+<section id="como"><div class="wrap">
+<div class="kicker">01 / Como funciona</div>
+<h2>Menos improviso. Mais entregas no caminho.</h2>
+<p class="sub">Da conferência ao destino, um fluxo simples que acompanha o seu dia de trabalho.</p>
+<div class="grid g4">
+<div class="card"><b class="num">01</b><h3>Importe o manifesto</h3><p>Traga sua lista de entregas em CSV ou Excel. Tudo começa com a carga organizada.</p></div>
+<div class="card"><b class="num">02</b><h3>Bipe a carga</h3><p>Use a câmera como leitor de código de barras e confira cada pacote.</p></div>
+<div class="card"><b class="num">03</b><h3>Carregue na ordem LIFO</h3><p>Veja o mapa do baú. A última entrega entra primeiro; a primeira fica à mão.</p></div>
+<div class="card"><b class="num">04</b><h3>Siga a rota otimizada</h3><p>Mapa e GPS para seguir o caminho e focar no que importa: entregar.</p></div>
+</div></div></section>
+<section id="recursos" style="background:var(--bg)"><div class="wrap">
+<div class="kicker">02 / Recursos</div>
+<h2>Seu copiloto logístico. Mesmo quando o sinal some.</h2>
+<div class="grid g3">
+<div class="card"><h3>Manifesto com versionamento</h3><p>Acompanhe alterações na lista de entregas sem perder a organização.</p></div>
+<div class="card"><h3>Scanner de pacotes</h3><p>Confira os códigos de barras com a câmera do seu celular.</p></div>
+<div class="card"><h3>Baú espacial LIFO</h3><p>Saiba onde colocar cada pacote para encontrar a próxima entrega.</p></div>
+<div class="card"><h3>Mapa logístico offline-first</h3><p>A rota continua disponível mesmo quando o sinal fica pelo caminho.</p></div>
+<div class="card"><h3>Sincronização em nuvem</h3><p>Reconectou? Sincronize os dados e mantenha o trabalho atualizado.</p></div>
+<div class="card"><h3>Funciona sem internet</h3><p>Continue conferindo e organizando a carga nas áreas sem cobertura.</p></div>
+</div></div></section>
+<section id="planos"><div class="wrap">
+<div class="kicker">03 / Planos</div>
+<h2>Mais organização. Um custo que cabe na rota.</h2>
+<div class="grid g3">
+<div class="card"><h3>Trial</h3><div class="price">Grátis<small> 30 dias</small></div><p>Sem cartão. Organização da carga LIFO, scanner e manifesto, operação offline-first.</p><br><a class="btn ghost" href="#baixar">Baixar o app</a></div>
+<div class="card" style="border:2px solid var(--blue)"><h3>Mensal Pix</h3><div class="price">R$ 19,90<small> /mês</small></div><p>Todos os recursos, sincronização em nuvem e suporte ao motorista. Sem cobrança automática: você renova só quando quiser.</p><br><a class="btn" href="#baixar">Baixar o app</a></div>
+</div>
+<p class="sub" style="margin-top:16px">Pagamento exclusivamente via Pix. Aplicativo apenas para Android, em breve na Google Play Store.</p>
+</div></section>
+<section id="baixar" style="background:var(--blue);color:#fff;text-align:center"><div class="wrap">
+<h2 style="color:#fff">A próxima entrega começa com um baú organizado.</h2>
+<p style="color:#DCE7FF">Android 7 ou superior · Câmera para bipar os pacotes · Em breve na Google Play Store</p><br>
+<a class="btn" style="background:#fff;color:var(--blue)" href="lifo.apk">Baixar o app</a>
+</div></section>
+<section id="faq"><div class="wrap">
+<div class="kicker">04 / Dúvidas frequentes</div>
+<h2>Antes de pegar a estrada.</h2>
+<details><summary>O que significa LIFO?</summary><p>Last In, First Out: a última entrega entra primeiro no fundo do baú, e a primeira fica à mão na porta. O app monta esse mapa pra você.</p></details>
+<details><summary>Preciso de internet para usar?</summary><p>Não. O app é offline-first: confere, bipa e organiza sem sinal; sincroniza quando reconectar.</p></details>
+<details><summary>Quais celulares são compatíveis?</summary><p>Android 7 ou superior, com câmera para bipar os pacotes.</p></details>
+<details><summary>Como faço o pagamento?</summary><p>Via Pix de R$ 19,90 por mês, sem cobrança automática. Você renova quando quiser.</p></details>
+<details><summary>Tem versão web ou para iPhone?</summary><p>Por enquanto só Android. A versão web e iOS estão no roteiro da equipe.</p></details>
+</div></section>
+<footer><div class="wrap">
+<div class="logo" style="color:#fff">L.I.F.O<span>.</span></div>
+<p>Inteligência na carga. Agilidade na entrega. Feito em Florianópolis, Brasil.<br>E-mail: contato@lifo.com.br · CNPJ: a informar.</p>
+<form action="mailto:contato@lifo.com.br" method="post" enctype="text/plain">
+<input name="nome" placeholder="Seu nome" required>
+<input name="telefone" placeholder="(48) 99999-9999">
+<textarea name="mensagem" rows="3" placeholder="Como podemos ajudar?"></textarea>
+<button class="btn" type="submit">Enviar por e-mail</button>
+</form>
+<p style="margin-top:24px;font-size:14px">© L.I.F.O. 2026 · <a href="#">Termos de uso</a> · <a href="#">Privacidade</a></p>
+</div></footer>
+</body>
+</html>
