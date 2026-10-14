@@ -341,55 +341,28 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
             ),
             const Spacer(),
             if (hasPackages) ...[
-              Wrap(
-                spacing: 4,
-                runSpacing: 4,
-                children: [
-                  for (final n in orderedNums.take(2))
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: AppColors.primaryBlue,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Text(
-                        'Parada #$n',
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  if (orderedNums.length > 2)
-                    Text(
-                      '+${orderedNums.length - 2}',
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                        color: isDark
-                            ? AppColors.darkTextSecondary
-                            : AppColors.lightTextSecondary,
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 4),
+              // Só as contagens: com muitos volumes a lista de paradas estoura
+              // o quadrado — quem quiser a lista completa toca e abre o painel.
               Text(
-                '$totalPackages vol • ${totalWeight.toStringAsFixed(1)} kg',
+                '${orderedNums.length} ${orderedNums.length == 1 ? 'parada' : 'paradas'} • $totalPackages vol',
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  color: isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '${totalWeight.toStringAsFixed(1)} kg • Descarregar #${slot.unloadingOrder}',
+                style: TextStyle(
+                  fontSize: 10.5,
                   fontWeight: FontWeight.w600,
                   color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
                 ),
-              ),
-              Text(
-                'Descarregar #${slot.unloadingOrder}',
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.primaryBlue,
-                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ] else ...[
               Text(
