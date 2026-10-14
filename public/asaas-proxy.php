@@ -1,5 +1,20 @@
 <?php
-const PROXY_SECRET = 'Tatananog12#';
+// Proxy IP fixo LIFO -> Asaas.
+// A senha NÃO fica neste arquivo: ela mora em asaas-proxy-config.php
+// UM NÍVEL ACIMA do public_html (fora da área web e fora do git).
+// Veja public/asaas-proxy-config.example.php
+$configFile = dirname(__DIR__) . '/asaas-proxy-config.php';
+if (is_file($configFile)) { require $configFile; }
+if (!defined('PROXY_SECRET') || PROXY_SECRET === '') {
+  $envSecret = getenv('ASAAS_PROXY_SECRET');
+  if ($envSecret !== false && $envSecret !== '') { define('PROXY_SECRET', $envSecret); }
+}
+if (!defined('PROXY_SECRET') || PROXY_SECRET === '' || PROXY_SECRET === 'TROQUE-ESTA-SENHA') {
+  http_response_code(500);
+  header('Content-Type: application/json');
+  echo json_encode(['error' => 'proxy nao configurado']);
+  exit;
+}
 const ASAAS_BASE = 'https://api.asaas.com/v3';
 const ALLOWED = ['/customers', '/payments'];
 header('Content-Type: application/json');
