@@ -19,14 +19,52 @@ class LoginScreen extends ConsumerStatefulWidget {
   ConsumerState<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends ConsumerState<LoginScreen> {
+class _LoginScreenState extends ConsumerState<LoginScreen>
+    with SingleTickerProviderStateMixin {
   final _formKey = GlobalKey<FormState>();
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _obscurePassword = true;
 
+  late final AnimationController _enter;
+  late final Animation<double> _logoOpacity;
+  late final Animation<Offset> _logoSlide;
+  late final Animation<double> _cardOpacity;
+  late final Animation<Offset> _cardSlide;
+  late final Animation<double> _footOpacity;
+  late final Animation<Offset> _footSlide;
+
+  @override
+  void initState() {
+    super.initState();
+    _enter = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 850),
+    );
+    _logoOpacity = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _enter, curve: const Interval(0.0, 0.45, curve: Curves.easeOutCubic)),
+    );
+    _logoSlide = Tween<Offset>(begin: const Offset(0, 0.35), end: Offset.zero).animate(
+      CurvedAnimation(parent: _enter, curve: const Interval(0.0, 0.45, curve: Curves.easeOutCubic)),
+    );
+    _cardOpacity = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _enter, curve: const Interval(0.25, 0.72, curve: Curves.easeOutCubic)),
+    );
+    _cardSlide = Tween<Offset>(begin: const Offset(0, 0.22), end: Offset.zero).animate(
+      CurvedAnimation(parent: _enter, curve: const Interval(0.25, 0.72, curve: Curves.easeOutCubic)),
+    );
+    _footOpacity = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _enter, curve: const Interval(0.55, 1.0, curve: Curves.easeOutCubic)),
+    );
+    _footSlide = Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero).animate(
+      CurvedAnimation(parent: _enter, curve: const Interval(0.55, 1.0, curve: Curves.easeOutCubic)),
+    );
+    _enter.forward();
+  }
+
   @override
   void dispose() {
+    _enter.dispose();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
@@ -141,11 +179,16 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     final subColor = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
     final borderColor = isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
 
-    return Scaffold(
+    return GestureDetector(
+      onTap: () => FocusScope.of(context).unfocus(),
+      child: Scaffold(
       backgroundColor: bg,
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
+            physics: const BouncingScrollPhysics(
+              parent: AlwaysScrollableScrollPhysics(),
+            ),
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
             child: Form(
               key: _formKey,
@@ -153,9 +196,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // App Icon / Logo
+                  // App Icon / Logo — entrada suave escalonada
+                  FadeTransition(
+                    opacity: _logoOpacity,
+                    child: SlideTransition(
+                      position: _logoSlide,
+                      child: Column(
+                        children: [
                   Center(
-                    child: Container(
+                    child: Hero(
+                      tag: 'lifo-logo',
+                      child: Container(
                       width: 72,
                       height: 72,
                       decoration: BoxDecoration(
@@ -180,6 +231,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                           color: Colors.white,
                         ),
                       ),
+                      ),
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -201,10 +253,18 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     textAlign: TextAlign.center,
                     style: TextStyle(color: subColor, fontSize: 13),
                   ),
+                        ],
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 28),
 
-                  // Login Form Card
-                  Container(
+                  // Login Form Card — sobe com fade
+                  FadeTransition(
+                    opacity: _cardOpacity,
+                    child: SlideTransition(
+                      position: _cardSlide,
+                      child: Container(
                     padding: const EdgeInsets.all(22),
                     decoration: BoxDecoration(
                       color: cardBg,
@@ -301,8 +361,12 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                         ),
                         const SizedBox(height: 20),
 
-                        // Botão Entrar
-                        SizedBox(
+                        // Botão Entrar — afunda 2% ao carregar (física)
+                        AnimatedScale(
+                          scale: authState.isLoading ? 0.98 : 1.0,
+                          duration: const Duration(milliseconds: 180),
+                          curve: Curves.easeOutCubic,
+                          child: SizedBox(
                           width: double.infinity,
                           height: 48,
                           child: ElevatedButton(
@@ -313,23 +377,40 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                               elevation: 0,
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                             ),
-                            child: authState.isLoading
-                                ? const SizedBox(
-                                    width: 22,
-                                    height: 22,
-                                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                                  )
-                                : const Text(
-                                    'Entrar',
-                                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                                  ),
+                            child: AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 220),
+                              switchInCurve: Curves.easeOutCubic,
+                              child: authState.isLoading
+                                  ? const SizedBox(
+                                      key: ValueKey('loading'),
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                    )
+                                  : const Text(
+                                      key: ValueKey('label'),
+                                      'Entrar',
+                                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                                    ),
+                            ),
+                          ),
                           ),
                         ),
                       ],
                     ),
+                      ),
+                    ),
                   ),
                   const SizedBox(height: 20),
 
+                  // Rodapé — entra por último
+                  FadeTransition(
+                    opacity: _footOpacity,
+                    child: SlideTransition(
+                      position: _footSlide,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
                   // Divisor OU
                   Row(
                     children: [
@@ -370,21 +451,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ],
                   ),
                   const SizedBox(height: 16),
-
-                  // Continuar Offline (Convidado)
-                  Center(
-                    child: TextButton.icon(
-                      icon: Icon(Icons.offline_bolt_outlined, size: 16, color: subColor),
-                      label: Text(
-                        'Continuar no Modo Offline (Convidado)',
-                        style: TextStyle(color: subColor, fontSize: 12, fontWeight: FontWeight.w500),
+                        ],
                       ),
-                      onPressed: () {
-                        Navigator.of(context).pushAndRemoveUntil(
-                          MaterialPageRoute(builder: (_) => const HomeDashboardScreen()),
-                          (route) => false,
-                        );
-                      },
                     ),
                   ),
                 ],
@@ -392,6 +460,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
             ),
           ),
         ),
+      ),
       ),
     );
   }

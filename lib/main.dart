@@ -46,12 +46,16 @@ class LifoApp extends ConsumerWidget {
     final authState = ref.watch(authControllerProvider);
 
     Widget home;
+    String switchKey;
     if (authState.isBooting) {
       home = const _BootSplash();
+      switchKey = 'boot';
+    } else if (authState.user.isLoggedIn) {
+      home = const HomeDashboardScreen();
+      switchKey = 'home';
     } else {
-      home = authState.user.isLoggedIn
-          ? const HomeDashboardScreen()
-          : const LoginScreen();
+      home = const LoginScreen();
+      switchKey = 'login';
     }
 
     return MaterialApp(
@@ -60,34 +64,68 @@ class LifoApp extends ConsumerWidget {
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system,
-      home: home,
+      // Troca login <-> home com fade + leve subida (manteiga, sem flash).
+      home: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 380),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        transitionBuilder: (child, animation) {
+          final fade = FadeTransition(opacity: animation, child: child);
+          final slide = SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.04),
+              end: Offset.zero,
+            ).animate(animation),
+            child: fade,
+          );
+          return slide;
+        },
+        layoutBuilder: (current, previous) => Stack(
+          alignment: Alignment.center,
+          children: [...previous, if (current != null) current],
+        ),
+        child: KeyedSubtree(key: ValueKey(switchKey), child: home),
+      ),
     );
   }
 }
 
 /// Splash exibido enquanto a sessão salva é restaurada (sem flash de login).
+/// Respiração suave no logo p/ boot não parecer travado.
 class _BootSplash extends StatelessWidget {
   const _BootSplash();
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      backgroundColor: Color(0xFF0066FF),
+    return Scaffold(
+      backgroundColor: const Color(0xFF0066FF),
       body: Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              'L.I.F.O.',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 44,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 2,
+            TweenAnimationBuilder<double>(
+              tween: Tween(begin: 0.92, end: 1.0),
+              duration: const Duration(milliseconds: 900),
+              curve: Curves.easeOutCubic,
+              builder: (context, scale, child) => Transform.scale(
+                scale: scale,
+                child: Opacity(
+                  opacity: 0.4 + 0.6 * ((scale - 0.92) / 0.08).clamp(0.0, 1.0),
+                  child: child,
+                ),
+              ),
+              child: const Text(
+                'L.I.F.O.',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 44,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 2,
+                ),
               ),
             ),
-            SizedBox(height: 16),
-            CircularProgressIndicator(color: Colors.white),
+            const SizedBox(height: 16),
+            const CircularProgressIndicator(color: Colors.white),
           ],
         ),
       ),

@@ -346,26 +346,41 @@ class AuthController extends StateNotifier<AuthState> {
   // ─── LOGOUT ───────────────────────────────────────────────────────────────
 
   Future<void> logout() async {
-    HapticFeedback.lightImpact();
+    HapticFeedback.mediumImpact();
+    state = state.copyWith(isLoading: true);
 
     // Desloga no Supabase e no Google (cada um isolado p/ nunca travar)
     try {
-      await SupabaseService.instance.signOut();
+      await SupabaseService.instance.signOut().timeout(
+        const Duration(seconds: 6),
+        onTimeout: () {},
+      );
     } catch (_) {}
     try {
-      await GoogleAuthService.instance.signOut();
+      await GoogleAuthService.instance.signOut().timeout(
+        const Duration(seconds: 6),
+        onTimeout: () {},
+      );
     } catch (_) {}
 
-    // Limpa sessão local e volta p/ convidado mesmo se o banco falhar
+    // Limpa 100% da sessão local: SQLite + prefs. Sem espelho, sem fantasma.
     try {
-      final guest = _guestProfile();
-      await AppDatabase.instance.saveUserProfile(guest);
+      await AppDatabase.instance.clearUserProfile();
+    } catch (_) {}
+    try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(_kUserPrefKey);
-      state = state.copyWith(user: guest, isBooting: false);
-    } catch (_) {
-      state = state.copyWith(user: _guestProfile(), isBooting: false);
-    }
+    } catch (_) {}
+
+    // Volta p/ convidado deslogado — a raiz (main) troca p/ Login sozinha,
+    // e cada tela de saída empurra Login com pushAndRemoveUntil p/ zerar a pilha.
+    state = state.copyWith(
+      user: _guestProfile(),
+      isBooting: false,
+      isLoading: false,
+      successMessage: null,
+      errorMessage: null,
+    );
   }
 }
 

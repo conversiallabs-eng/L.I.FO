@@ -3,10 +3,24 @@ import 'package:flutter/services.dart';
 import 'app_colors.dart';
 
 class AppTheme {
+  /// Transições suaves em todas as plataformas: deslize iOS (60/120fps,
+  /// com driver nativo) no mobile + fade elegante no desktop/web.
+  static const _pageTransitions = PageTransitionsTheme(
+    builders: {
+      TargetPlatform.android: CupertinoPageTransitionsBuilder(),
+      TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+      TargetPlatform.windows: FadeUpwardsPageTransitionsBuilder(),
+      TargetPlatform.macOS: CupertinoPageTransitionsBuilder(),
+      TargetPlatform.linux: FadeUpwardsPageTransitionsBuilder(),
+    },
+  );
+
   static ThemeData get darkTheme {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.dark,
+      pageTransitionsTheme: _pageTransitions,
+      splashFactory: InkSparkle.splashFactory,
       primaryColor: AppColors.circuitBlue,
       scaffoldBackgroundColor: AppColors.carbonBackground,
       colorScheme: const ColorScheme.dark(
@@ -100,6 +114,8 @@ class AppTheme {
     return ThemeData(
       useMaterial3: true,
       brightness: Brightness.light,
+      pageTransitionsTheme: _pageTransitions,
+      splashFactory: InkSparkle.splashFactory,
       primaryColor: AppColors.circuitBlue,
       scaffoldBackgroundColor: AppColors.lightBackground,
       colorScheme: const ColorScheme.light(

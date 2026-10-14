@@ -430,12 +430,55 @@ class MyAccountScreen extends ConsumerWidget {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
                 onPressed: () async {
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    barrierDismissible: true,
+                    builder: (dCtx) => AlertDialog(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      title: const Text(
+                        'Sair da conta?',
+                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                      ),
+                      content: const Text(
+                        'Você vai para a tela de login e a sessão atual é encerrada em todos os serviços.',
+                        style: TextStyle(fontSize: 13),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(dCtx, false),
+                          child: const Text('Cancelar'),
+                        ),
+                        FilledButton(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppColors.statusDanger,
+                          ),
+                          onPressed: () => Navigator.pop(dCtx, true),
+                          child: const Text('Sair'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirm != true) return;
+                  if (context.mounted) {
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (_) => const Center(
+                        child: CircularProgressIndicator(),
+                      ),
+                    );
+                  }
                   await ref.read(authControllerProvider.notifier).logout();
                   if (context.mounted) {
-                    // Volta para a raiz (tela de login) em vez de ficar parado
-                    Navigator.of(context).popUntil((route) => route.isFirst);
+                    // Zera a pilha: nenhuma rota do app logado sobrevive.
+                    LoginScreen.open(context);
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Você saiu da sua conta.')),
+                      const SnackBar(
+                        content: Text('Você saiu da sua conta.'),
+                        behavior: SnackBarBehavior.floating,
+                      ),
                     );
                   }
                 },

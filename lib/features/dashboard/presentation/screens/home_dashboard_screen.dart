@@ -3952,13 +3952,20 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                               padding: const EdgeInsets.symmetric(vertical: 10),
                             ),
                             onPressed: () async {
-                              Navigator.of(context).pop();
+                              final drawerCtx = context;
+                              Navigator.of(drawerCtx).pop();
                               await ref.read(authControllerProvider.notifier).logout();
-                              if (context.mounted) {
-                                // A home raiz já virou Login pelo estado;
-                                // garante que não restou rota por cima.
-                                Navigator.of(context)
-                                    .popUntil((route) => route.isFirst);
+                              if (drawerCtx.mounted) {
+                                // Zera a pilha: nenhuma rota logada sobrevive.
+                                // A raiz (main) já trocou p/ Login pelo estado,
+                                // o pushAndRemoveUntil garante o descarte total.
+                                LoginScreen.open(drawerCtx);
+                                ScaffoldMessenger.of(drawerCtx).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Você saiu da sua conta.'),
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
                               }
                             },
                           ),
