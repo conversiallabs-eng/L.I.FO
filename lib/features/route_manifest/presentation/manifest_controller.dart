@@ -6,6 +6,7 @@ import '../data/manifest_repository.dart';
 import '../domain/models/manifest_version.dart';
 import '../domain/models/delivery_stop.dart';
 import '../domain/models/package_item.dart';
+import '../domain/models/spatial_slot.dart';
 import '../../../core/services/hybrid_routing_service.dart';
 import '../../../core/services/manifest_import_service.dart';
 
@@ -513,6 +514,21 @@ class ManifestNotifier extends StateNotifier<ManifestState> {
       state = state.copyWith(errorMessage: 'Erro ao vincular pacote: $e');
       return false;
     }
+  }
+
+  /// Bipagem por quadrado do baú: move o pacote p/ o compartimento e marca
+  /// como carregado. Retorna o pacote ou null se o código não está no manifesto.
+  Future<PackageItem?> assignPackageToSlot({
+    required String barcode,
+    required SpatialSlot slot,
+  }) async {
+    final updated =
+        await _repository.assignPackageToSlot(barcode: barcode, slot: slot);
+    if (updated == null) return null;
+    HapticFeedback.mediumImpact();
+    final fresh = await _repository.getOrInitCurrentManifest();
+    state = state.copyWith(currentVersion: fresh ?? state.currentVersion);
+    return updated;
   }
 
   Future<void> updateStopStatus(String stopId, StopStatus newStatus) async {

@@ -6,10 +6,15 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../route_manifest/presentation/manifest_controller.dart';
 import '../../../route_manifest/presentation/screens/add_stop_sheet.dart';
 import '../../../route_manifest/domain/models/delivery_stop.dart';
+import '../../../route_manifest/domain/models/spatial_slot.dart';
 import '../../../../core/services/geocoding_service.dart';
 
 class CargoScannerScreen extends ConsumerStatefulWidget {
-  const CargoScannerScreen({super.key});
+  /// Quando definido, cada bip atribui o volume a este compartimento do baú
+  /// (modo "bipar por quadrado") em vez de só marcar como carregado.
+  final SpatialSlotType? assignToSlot;
+
+  const CargoScannerScreen({super.key, this.assignToSlot});
 
   @override
   ConsumerState<CargoScannerScreen> createState() => _CargoScannerScreenState();
@@ -70,6 +75,11 @@ class _CargoScannerScreenState extends ConsumerState<CargoScannerScreen> {
     }
 
     if (found) {
+      await _assignSlotIfNeeded(trimmed);
+      if (!mounted) {
+        _isProcessing = false;
+        return;
+      }
       setState(() {
         _showScannedCard = true;
       });
@@ -82,6 +92,18 @@ class _CargoScannerScreenState extends ConsumerState<CargoScannerScreen> {
         _isProcessing = false;
       });
     }
+  }
+
+  /// Modo "bipar por quadrado" do baú: move o volume lido para o
+  /// compartimento escolhido, marcando-o como carregado (bipar = carregar).
+  /// Fora desse modo é no-op — o fluxo padrão apenas confere a carga.
+  Future<void> _assignSlotIfNeeded(String barcode) async {
+    final slotType = widget.assignToSlot;
+    if (slotType == null) return;
+    await ref.read(manifestControllerProvider.notifier).assignPackageToSlot(
+          barcode: barcode,
+          slot: SpatialSlot.fromType(slotType),
+        );
   }
 
   /// Modal mostrado quando o QR/barcode lido não está no manifesto.

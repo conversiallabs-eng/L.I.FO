@@ -12,9 +12,11 @@ import '../../../../core/models/route_step.dart';
 import '../../../../core/utils/lifo_calculator.dart';
 import '../../../route_manifest/domain/models/delivery_stop.dart';
 import '../../../route_manifest/domain/models/package_item.dart';
+import '../../../route_manifest/domain/models/spatial_slot.dart';
 import '../../../route_manifest/presentation/manifest_controller.dart';
 import '../../../cargo_scanner/presentation/screens/cargo_scanner_screen.dart';
 import '../../../vehicle_load/presentation/screens/vehicle_bay_screen.dart';
+import '../../../vehicle_load/data/slot_names.dart';
 import '../../../route_manifest/presentation/screens/manifest_versions_screen.dart';
 import '../../../route_manifest/presentation/screens/add_stop_sheet.dart';
 import '../../../route_manifest/presentation/screens/import_manifest_sheet.dart';
@@ -3004,6 +3006,74 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     );
 }
 
+  /// Compartimentos distintos onde estão os volumes desta parada.
+  List<SpatialSlot> _stopSlots(DeliveryStop stop) {
+    final seen = <SpatialSlotType>{};
+    final slots = <SpatialSlot>[];
+    for (final pkg in stop.packages) {
+      if (seen.add(pkg.spatialSlot.type)) slots.add(pkg.spatialSlot);
+    }
+    return slots;
+  }
+
+  /// Chip "LOCAL: Porta Traseira" — mostra onde achar os volumes no baú.
+  /// Usa o nome personalizado do compartimento quando o motorista renomeou.
+  Widget _buildStopLocationChip({
+    required bool isDark,
+    required DeliveryStop stop,
+  }) {
+    final slots = _stopSlots(stop);
+    if (slots.isEmpty) return const SizedBox.shrink();
+    final names = ref.read(slotNamesProvider);
+    final labelColor = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    return Padding(
+      padding: const EdgeInsets.only(top: 5),
+      child: Wrap(
+        spacing: 5,
+        runSpacing: 4,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.grid_view_rounded, size: 13, color: labelColor),
+              const SizedBox(width: 5),
+              Text(
+                'LOCAL: ',
+                style: TextStyle(
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.4,
+                  color: labelColor,
+                ),
+              ),
+            ],
+          ),
+          for (final slot in slots)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                color: slot.visualColor.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: slot.visualColor.withValues(alpha: 0.55),
+                  width: 1,
+                ),
+              ),
+              child: Text(
+                SlotNamesNotifier.labelOf(names, slot),
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  color: isDark ? Colors.white : const Color(0xFF0F172A),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   String _stopTimeLabel({
     required int index,
     required DeliveryStop stop,
@@ -3190,6 +3260,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                       stop.address,
                       style: TextStyle(color: subColor, fontSize: 12),
                     ),
+                    _buildStopLocationChip(isDark: isDark, stop: stop),
                     // Badge de código de rastreio
                     Builder(builder: (context) {
                       final barcodes = stop.packages
@@ -3651,6 +3722,8 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
             ),
           );
         }),
+
+          _buildStopLocationChip(isDark: isDark, stop: stop),
 
           // Observações do manifesto (se houver)
           if (notes != null && notes.isNotEmpty) ...[

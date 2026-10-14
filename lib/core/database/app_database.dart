@@ -402,6 +402,30 @@ class AppDatabase {
     return count > 0;
   }
 
+  /// Move um pacote para um compartimento do baú (bipagem por quadrado).
+  /// Marca como carregado junto — bipar é carregar.
+  Future<bool> assignPackageToSlot({
+    required String packageId,
+    required String spatialSlotLabel,
+    bool markLoaded = true,
+  }) async {
+    final db = await database;
+    final values = <String, Object?>{
+      'spatial_slot': spatialSlotLabel,
+    };
+    if (markLoaded) {
+      values['status'] = PackageStatus.loaded.name;
+      values['scanned_at'] = DateTime.now().toIso8601String();
+    }
+    final count = await db.update(
+      'package_items',
+      values,
+      where: 'id = ?',
+      whereArgs: [packageId],
+    );
+    return count > 0;
+  }
+
   // Inserts a new package directly into an existing stop (for scanner-based linking)
   Future<void> insertPackageForStop({
     required String packageId,

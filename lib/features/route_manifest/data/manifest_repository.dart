@@ -420,6 +420,38 @@ class ManifestRepository {
     await _db.updateStopStatus(stopId, status);
   }
 
+  /// Atribui um pacote (barcode) a um compartimento do baú, marcando como
+  /// carregado. Retorna o pacote atualizado ou null se não achou no manifesto.
+  Future<PackageItem?> assignPackageToSlot({
+    required String barcode,
+    required SpatialSlot slot,
+  }) async {
+    final current = await _db.getCurrentVersion();
+    if (current == null) return null;
+    final code = barcode.trim().toUpperCase();
+    PackageItem? found;
+    for (final stop in current.stops) {
+      for (final pkg in stop.packages) {
+        if (pkg.barcode.trim().toUpperCase() == code) {
+          found = pkg;
+          break;
+        }
+      }
+      if (found != null) break;
+    }
+    if (found == null) return null;
+    final ok = await _db.assignPackageToSlot(
+      packageId: found.id,
+      spatialSlotLabel: slot.label,
+    );
+    if (!ok) return null;
+    return found.copyWith(
+      spatialSlot: slot,
+      status: PackageStatus.loaded,
+      scannedAt: DateTime.now(),
+    );
+  }
+
   Future<void> updateVersionLabel(String versionId, String newLabel) async {
     await _db.database.then((db) => db.rawUpdate(
       'UPDATE manifest_versions SET label = ? WHERE id = ?',
