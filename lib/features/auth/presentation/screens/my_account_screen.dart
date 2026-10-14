@@ -5,13 +5,56 @@ import '../controllers/auth_controller.dart';
 import 'login_screen.dart';
 import 'subscription_renewal_screen.dart';
 
-class MyAccountScreen extends ConsumerWidget {
+class MyAccountScreen extends ConsumerStatefulWidget {
   const MyAccountScreen({super.key});
 
   static Future<void> open(BuildContext context) {
     return Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const MyAccountScreen()),
     );
+  }
+
+  @override
+  ConsumerState<MyAccountScreen> createState() => _MyAccountScreenState();
+}
+
+class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
+  /// Ordem dos campos (navegação do teclado e salvamento).
+  static const _fieldOrder = ['name', 'cpf', 'rg', 'phone', 'address', 'cep'];
+
+  bool _editing = false;
+  bool _saving = false;
+  late final Map<String, TextEditingController> _ctrls;
+  late final Map<String, FocusNode> _focus;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrls = {for (final k in _fieldOrder) k: TextEditingController()};
+    _focus = {for (final k in _fieldOrder) k: FocusNode()};
+    _syncControllers();
+  }
+
+  /// Traz os valores atuais do usuário p/ os campos (ao entrar em edição).
+  void _syncControllers() {
+    final user = ref.read(authControllerProvider).user;
+    _ctrls['name']!.text = user.name;
+    _ctrls['cpf']!.text = user.cpf ?? '';
+    _ctrls['rg']!.text = user.rg ?? '';
+    _ctrls['phone']!.text = user.phone ?? '';
+    _ctrls['address']!.text = user.billingAddress ?? '';
+    _ctrls['cep']!.text = user.billingCep ?? '';
+  }
+
+  @override
+  void dispose() {
+    for (final c in _ctrls.values) {
+      c.dispose();
+    }
+    for (final f in _focus.values) {
+      f.dispose();
+    }
+    super.dispose();
   }
 
   String _formatDate(DateTime dt) {
@@ -23,103 +66,69 @@ class MyAccountScreen extends ConsumerWidget {
     return 'Expira em $dayName $day de $month';
   }
 
-  void _editProfileDialog(BuildContext context, WidgetRef ref) {
-    final user = ref.read(authControllerProvider).user;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+  /// Entra em modo de edição; [focusField] já abre o teclado nesse campo.
+  void _enterEdit({String? focusField}) {
+    if (_saving) return;
+    _syncControllers();
+    setState(() => _editing = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final key = focusField ?? 'name';
+      _focus[key]?.requestFocus();
+    });
+  }
 
-    final nameCtrl = TextEditingController(text: user.name);
-    final cpfCtrl = TextEditingController(text: user.cpf ?? '');
-    final rgCtrl = TextEditingController(text: user.rg ?? '');
-    final phoneCtrl = TextEditingController(text: user.phone ?? '');
-    final addressCtrl = TextEditingController(text: user.billingAddress ?? '');
-    final cepCtrl = TextEditingController(text: user.billingCep ?? '');
+  void _cancelEdit() {
+    if (_saving) return;
+    FocusScope.of(context).unfocus();
+    setState(() => _editing = false);
+  }
 
-    showDialog(
-      context: context,
-      builder: (dCtx) => AlertDialog(
-        backgroundColor: isDark ? const Color(0xFF1E293B) : Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Editar Dados do Perfil', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _buildEditField('Nome Completo', nameCtrl, isDark),
-              const SizedBox(height: 10),
-              _buildEditField('CPF', cpfCtrl, isDark),
-              const SizedBox(height: 10),
-              _buildEditField('RG', rgCtrl, isDark),
-              const SizedBox(height: 10),
-              _buildEditField('Telefone / WhatsApp', phoneCtrl, isDark),
-              const SizedBox(height: 10),
-              _buildEditField('Endereço de Faturamento', addressCtrl, isDark),
-              const SizedBox(height: 10),
-              _buildEditField('CEP', cepCtrl, isDark),
-            ],
-          ),
+  /// Salva (botão Editar/Salvar ou Enter do teclado).
+  Future<void> _saveEdits() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    FocusScope.of(context).unfocus();
+
+    final ok = await ref.read(authControllerProvider.notifier).updateProfile(
+          name: _ctrls['name']!.text.trim(),
+          cpf: _ctrls['cpf']!.text.trim(),
+          rg: _ctrls['rg']!.text.trim(),
+          phone: _ctrls['phone']!.text.trim(),
+          billingAddress: _ctrls['address']!.text.trim(),
+          billingCep: _ctrls['cep']!.text.trim(),
+        );
+
+    if (!mounted) return;
+    setState(() {
+      _saving = false;
+      if (ok) _editing = false;
+    });
+    final err = ref.read(authControllerProvider).errorMessage;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok ? 'Dados atualizados com sucesso!' : (err ?? 'O servidor recusou os dados.'),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dCtx),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF2563EB),
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () async {
-              final ok = await ref.read(authControllerProvider.notifier).updateProfile(
-                name: nameCtrl.text.trim(),
-                cpf: cpfCtrl.text.trim(),
-                rg: rgCtrl.text.trim(),
-                phone: phoneCtrl.text.trim(),
-                billingAddress: addressCtrl.text.trim(),
-                billingCep: cepCtrl.text.trim(),
-              );
-              if (dCtx.mounted) Navigator.pop(dCtx);
-              if (context.mounted) {
-                final err = ref.read(authControllerProvider).errorMessage;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      ok
-                          ? 'Dados atualizados com sucesso!'
-                          : (err ?? 'O servidor recusou os dados.'),
-                    ),
-                    backgroundColor: ok
-                        ? const Color(0xFF2563EB)
-                        : const Color(0xFFDC2626),
-                    behavior: SnackBarBehavior.floating,
-                    duration: Duration(seconds: ok ? 3 : 6),
-                  ),
-                );
-              }
-            },
-            child: const Text('Salvar'),
-          ),
-        ],
+        backgroundColor: ok ? const Color(0xFF2563EB) : const Color(0xFFDC2626),
+        behavior: SnackBarBehavior.floating,
+        duration: Duration(seconds: ok ? 3 : 6),
       ),
     );
   }
 
-  Widget _buildEditField(String label, TextEditingController ctrl, bool isDark) {
-    return TextField(
-      controller: ctrl,
-      style: TextStyle(color: isDark ? Colors.white : const Color(0xFF0F172A), fontSize: 13),
-      decoration: InputDecoration(
-        labelText: label,
-        labelStyle: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B)),
-        filled: true,
-        fillColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
+  /// Enter no campo: avança p/ o próximo ou salva no último.
+  void _onFieldSubmitted(String key) {
+    final idx = _fieldOrder.indexOf(key);
+    if (idx >= 0 && idx < _fieldOrder.length - 1) {
+      _focus[_fieldOrder[idx + 1]]?.requestFocus();
+    } else {
+      _saveEdits();
+    }
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final authState = ref.watch(authControllerProvider);
     final user = authState.user;
@@ -135,7 +144,13 @@ class MyAccountScreen extends ConsumerWidget {
     final subColor = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
     final borderColor = isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
 
-    return Scaffold(
+    // Voltar no meio da edição cancela a edição em vez de sair da tela.
+    return PopScope(
+      canPop: !_editing && !_saving,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && mounted) _cancelEdit();
+      },
+      child: Scaffold(
       backgroundColor: bg,
       appBar: AppBar(
         backgroundColor: bg,
@@ -149,13 +164,6 @@ class MyAccountScreen extends ConsumerWidget {
           style: TextStyle(color: titleColor, fontSize: 18, fontWeight: FontWeight.w700),
         ),
         centerTitle: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.edit_outlined, size: 20, color: Color(0xFF2563EB)),
-            tooltip: 'Editar Perfil',
-            onPressed: () => _editProfileDialog(context, ref),
-          ),
-        ],
       ),
       body: SafeArea(
         child: ListView(
@@ -284,10 +292,26 @@ class MyAccountScreen extends ConsumerWidget {
                   style: TextStyle(color: titleColor, fontSize: 14, fontWeight: FontWeight.w700),
                 ),
                 InkWell(
-                  onTap: () => _editProfileDialog(context, ref),
-                  child: const Text(
-                    'Editar',
-                    style: TextStyle(color: Color(0xFF2563EB), fontSize: 13, fontWeight: FontWeight.w600),
+                  onTap: _saving ? null : () => _editing ? _saveEdits() : _enterEdit(),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    child: _saving
+                        ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(
+                            _editing ? 'Salvar' : 'Editar',
+                            style: TextStyle(
+                              color: _editing
+                                  ? const Color(0xFF059669)
+                                  : const Color(0xFF2563EB),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
                   ),
                 ),
               ],
@@ -308,36 +332,47 @@ class MyAccountScreen extends ConsumerWidget {
                     value: user.name,
                     titleColor: titleColor,
                     subColor: subColor,
+                    fieldKey: 'name',
+                    capitalization: TextCapitalization.words,
+                    hint: 'Seu nome completo',
                   ),
                   Divider(color: borderColor, height: 1),
                   _buildProfileRow(
                     icon: Icons.badge_outlined,
                     label: 'CPF',
                     value: (user.cpf == null || user.cpf!.isEmpty)
-                        ? 'Toque em editar e cadastre seu CPF'
+                        ? 'Toque na linha e cadastre seu CPF'
                         : user.cpf!,
                     titleColor: titleColor,
                     subColor: subColor,
+                    fieldKey: 'cpf',
+                    keyboard: TextInputType.number,
+                    hint: '000.000.000-00',
                   ),
                   Divider(color: borderColor, height: 1),
                   _buildProfileRow(
                     icon: Icons.assignment_ind_outlined,
                     label: 'RG',
                     value: (user.rg == null || user.rg!.isEmpty)
-                        ? 'Toque em editar e cadastre seu RG'
+                        ? 'Toque na linha e cadastre seu RG'
                         : user.rg!,
                     titleColor: titleColor,
                     subColor: subColor,
+                    fieldKey: 'rg',
+                    hint: 'Seu RG',
                   ),
                   Divider(color: borderColor, height: 1),
                   _buildProfileRow(
                     icon: Icons.phone_outlined,
                     label: 'Telefone / WhatsApp',
                     value: (user.phone == null || user.phone!.isEmpty)
-                        ? 'Toque em editar e cadastre seu telefone'
+                        ? 'Toque na linha e cadastre seu telefone'
                         : user.phone!,
                     titleColor: titleColor,
                     subColor: subColor,
+                    fieldKey: 'phone',
+                    keyboard: TextInputType.phone,
+                    hint: '(00) 90000-0000',
                   ),
                 ],
               ),
@@ -363,20 +398,26 @@ class MyAccountScreen extends ConsumerWidget {
                     icon: Icons.location_on_outlined,
                     label: 'Endereço',
                     value: (user.billingAddress == null || user.billingAddress!.isEmpty)
-                        ? 'Toque em editar e cadastre seu endereço'
+                        ? 'Toque na linha e cadastre seu endereço'
                         : user.billingAddress!,
                     titleColor: titleColor,
                     subColor: subColor,
+                    fieldKey: 'address',
+                    capitalization: TextCapitalization.sentences,
+                    hint: 'Rua, número, bairro',
                   ),
                   Divider(color: borderColor, height: 1),
                   _buildProfileRow(
                     icon: Icons.mail_outline,
                     label: 'CEP',
                     value: (user.billingCep == null || user.billingCep!.isEmpty)
-                        ? 'Toque em editar e cadastre seu CEP'
+                        ? 'Toque na linha e cadastre seu CEP'
                         : user.billingCep!,
                     titleColor: titleColor,
                     subColor: subColor,
+                    fieldKey: 'cep',
+                    keyboard: TextInputType.number,
+                    hint: '00000-000',
                   ),
                   Divider(color: borderColor, height: 1),
                   _buildProfileRow(
@@ -507,6 +548,7 @@ class MyAccountScreen extends ConsumerWidget {
           ],
         ),
       ),
+      ),
     );
   }
 
@@ -517,8 +559,16 @@ class MyAccountScreen extends ConsumerWidget {
     required Color titleColor,
     required Color subColor,
     Widget? trailingWidget,
+    // Linha editável: toque abre edição inline, Enter salva.
+    String? fieldKey,
+    TextInputType keyboard = TextInputType.text,
+    TextCapitalization capitalization = TextCapitalization.none,
+    String? hint,
   }) {
-    return Padding(
+    final key = fieldKey;
+    final isFieldEditing = _editing && key != null;
+
+    final content = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -534,16 +584,56 @@ class MyAccountScreen extends ConsumerWidget {
                   style: TextStyle(fontSize: 11, color: subColor, fontWeight: FontWeight.w500),
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  value,
-                  style: TextStyle(fontSize: 13, color: titleColor, fontWeight: FontWeight.w600),
-                ),
+                if (isFieldEditing)
+                  TextField(
+                    controller: _ctrls[key]!,
+                    focusNode: _focus[key]!,
+                    keyboardType: keyboard,
+                    textCapitalization: capitalization,
+                    textInputAction: key == 'cep'
+                        ? TextInputAction.done
+                        : TextInputAction.next,
+                    onSubmitted: (_) => _onFieldSubmitted(key),
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: titleColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      contentPadding: EdgeInsets.zero,
+                      border: InputBorder.none,
+                      hintText: hint ?? value,
+                      hintStyle: TextStyle(
+                        fontSize: 13,
+                        color: subColor,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                  )
+                else
+                  Text(
+                    value,
+                    style: TextStyle(fontSize: 13, color: titleColor, fontWeight: FontWeight.w600),
+                  ),
               ],
             ),
           ),
+          if (key != null && !_editing)
+            Icon(Icons.edit_outlined, size: 14, color: subColor),
           ?trailingWidget,
         ],
       ),
     );
+
+    // Fora da edição, a linha inteira é o botão de editar aquele campo.
+    if (key != null && !_editing) {
+      return InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => _enterEdit(focusField: key),
+        child: content,
+      );
+    }
+    return content;
   }
 }
