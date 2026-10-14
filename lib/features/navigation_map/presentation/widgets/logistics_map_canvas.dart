@@ -61,17 +61,14 @@ class LogisticsMapCanvas extends StatelessWidget {
   // - Light: rua do Google (visual idêntico ao app do Google Maps/iFood).
   //   Endpoint não-oficial: se o Google recusar, o fallback OSM entra
   //   sozinho (fundo claro, água azul, vias amarelas).
-  // - Dark: ESRI Canvas Dark Gray Base + Reference (grafite, combina com a UI).
+  // - Dark: MESMO tile do Google com filtro noturno por tile (nítido até o
+  //   zoom 20 — o ESRI cinza parava no 16 e borrava na navegação).
   // - Satellite: ESRI World Imagery.
   static const String _googleRoads =
       'https://mt{s}.google.com/vt/lyrs=m&hl=pt-BR&x={x}&y={y}&z={z}';
   static const List<String> _googleSubdomains = ['0', '1', '2', '3'];
   static const String _osmFallback =
       'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-  static const String _esriDarkBase =
-      'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}';
-  static const String _esriDarkRef =
-      'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}';
   static const String _satelliteTile =
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
 
@@ -269,25 +266,17 @@ class LogisticsMapCanvas extends StatelessWidget {
                   errorTileCallback: (tile, error, stackTrace) {},
                 )
               else if (isDark) ...[
+                // Google modo noturno via filtro (1 camada só).
                 TileLayer(
-                  urlTemplate: _esriDarkBase,
+                  urlTemplate: _googleRoads,
+                  subdomains: _googleSubdomains,
+                  fallbackUrl: _osmFallback,
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
+                  tileBuilder: darkModeTileBuilder,
                   retinaMode: false,
                   maxZoom: 18,
-                  maxNativeZoom: 16,
-                  keepBuffer: 4,
-                  panBuffer: 2,
-                  tileDisplay: const TileDisplay.fadeIn(),
-                  errorTileCallback: (tile, error, stackTrace) {},
-                ),
-                TileLayer(
-                  urlTemplate: _esriDarkRef,
-                  userAgentPackageName: 'com.lifo.app',
-                  tileProvider: tileProvider,
-                  retinaMode: false,
-                  maxZoom: 18,
-                  maxNativeZoom: 16,
+                  maxNativeZoom: 20,
                   keepBuffer: 4,
                   panBuffer: 2,
                   tileDisplay: const TileDisplay.fadeIn(),
@@ -413,9 +402,7 @@ class LogisticsMapCanvas extends StatelessWidget {
             child: Text(
               isSatellite
                   ? '© Esri, Maxar, Earthstar Geographics'
-                  : (isDark
-                      ? '© Esri, © OpenStreetMap'
-                      : '© Google'),
+                  : '© Google',
               style: const TextStyle(
                 color: Colors.white70,
                 fontSize: 9,

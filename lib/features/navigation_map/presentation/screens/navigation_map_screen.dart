@@ -84,26 +84,20 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
             children: [
               // Tiles sem API key + cache em disco (sem retina simulada nas
               // camadas com rótulo: ela encolhe os nomes das ruas à metade).
-              // noturno = ESRI Dark Gray, claro = rua do Google (fallback OSM).
+              // noturno = Google com filtro dark (nítido até z20),
+              // claro = rua do Google (fallback OSM).
               if (isCabinNight) ...[
                 TileLayer(
                   urlTemplate:
-                      'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+                      'https://mt{s}.google.com/vt/lyrs=m&hl=pt-BR&x={x}&y={y}&z={z}',
+                  subdomains: const ['0', '1', '2', '3'],
+                  fallbackUrl:
+                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
+                  tileBuilder: darkModeTileBuilder,
                   maxZoom: 18,
-                  maxNativeZoom: 16,
-                  keepBuffer: 4,
-                  panBuffer: 2,
-                  tileDisplay: const TileDisplay.fadeIn(),
-                ),
-                TileLayer(
-                  urlTemplate:
-                      'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
-                  userAgentPackageName: 'com.lifo.app',
-                  tileProvider: tileProvider,
-                  maxZoom: 18,
-                  maxNativeZoom: 16,
+                  maxNativeZoom: 20,
                   keepBuffer: 4,
                   panBuffer: 2,
                   tileDisplay: const TileDisplay.fadeIn(),
