@@ -310,6 +310,22 @@ class HybridRoutingService {
   // Consulta de geometria no OSRM
   // ---------------------------------------------------------------------------
 
+  /// Distância de RUA na ordem exata dada (p/ o comparativo honesto
+  /// "ordem do manifesto x otimizada"). Retorna -1 se offline/sem rota.
+  Future<double> roadDistanceForPoints(List<LatLng> points) async {
+    if (points.length < 2) return -1;
+    try {
+      final coords = <String>[
+        for (final p in points) '${p.longitude},${p.latitude}',
+      ];
+      final result = await routeForCoordinates(coords);
+      final d = result?.distance ?? 0;
+      return d > 0 ? d : -1;
+    } catch (_) {
+      return -1;
+    }
+  }
+
   Future<({List<LatLng> points, double distance, double duration, List<double> legs})?> _fetchRouteGeometry({
     required List<DeliveryStop> stops,
     double? startLat,
@@ -325,6 +341,13 @@ class HybridRoutingService {
       coordinates.add('${stop.longitude},${stop.latitude}');
     }
 
+    return routeForCoordinates(coordinates);
+  }
+
+  /// Roteiriza coordenadas na ordem dada (com chunks de 25 pontos).
+  Future<({List<LatLng> points, double distance, double duration, List<double> legs})?> routeForCoordinates(
+    List<String> coordinates,
+  ) async {
     if (coordinates.length < 2) return null;
 
     const int chunkSize = 25;

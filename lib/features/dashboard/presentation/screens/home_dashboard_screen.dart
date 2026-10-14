@@ -1134,22 +1134,44 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   }
 
   Future<void> _openImport() async {
-    // Retorna os metros do trajeto ORIGINAL (ordem do arquivo) p/ o comparativo.
-    final originalMeters = await ImportManifestSheet.show(
+    // Baseline do comparativo: trajeto ORIGINAL (rua + reta, ordem do arquivo).
+    final baseline = await ImportManifestSheet.show(
       context,
       startLat: _currentLocation?.latitude,
       startLng: _currentLocation?.longitude,
     );
-    if (originalMeters != null && mounted) {
+    if (baseline != null && mounted) {
       _fitToCurrentManifest();
 
-      // ── Pede o nome da rota ─────────────────────────────────────────────
+      // ── Pede o nome da rota (entrada animada) ───────────────────────────
       final isDark = Theme.of(context).brightness == Brightness.dark;
       final nameCtrl = TextEditingController();
-      final routeName = await showDialog<String>(
+      final routeName = await showGeneralDialog<String>(
         context: context,
         barrierDismissible: false,
-        builder: (ctx) => AlertDialog(
+        barrierLabel: 'Dar nome à rota',
+        barrierColor: Colors.black54,
+        transitionDuration: const Duration(milliseconds: 320),
+        transitionBuilder: (dialogCtx, animation, secondaryAnim, child) {
+          final curved = CurvedAnimation(
+            parent: animation,
+            curve: Curves.easeOutCubic,
+          );
+          return FadeTransition(
+            opacity: curved,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.92, end: 1.0).animate(curved),
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.06),
+                  end: Offset.zero,
+                ).animate(curved),
+                child: child,
+              ),
+            ),
+          );
+        },
+        pageBuilder: (ctx, anim, secondaryAnim) => AlertDialog(
           backgroundColor: isDark ? const Color(0xFF1E293B) : Colors.white,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Text(
@@ -1246,13 +1268,28 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       final s = ref.read(manifestControllerProvider);
       final v = s.currentVersion;
       if (v != null && mounted) {
+        // Par comparável: rua x rua quando há rede nos dois lados;
+        // senão linha reta x linha reta (sempre mostra alguma economia real).
+        double cmpOriginal;
+        double cmpOptimized;
+        if (baseline.originalRoad > 0 && s.totalDistanceMeters > 0) {
+          cmpOriginal = baseline.originalRoad;
+          cmpOptimized = s.totalDistanceMeters;
+        } else {
+          cmpOriginal = baseline.originalHav;
+          cmpOptimized = LifoCalculator.pathLength(
+            v.stops,
+            startLat: baseline.startLat,
+            startLng: baseline.startLng,
+          );
+        }
         final viewOnMap = await ImportSuccessDialog.show(
           context,
           version: v,
           totalDurationSeconds: s.totalDurationSeconds,
           routeComputedAt: s.routeComputedAt,
-          totalDistanceMeters: s.totalDistanceMeters,
-          originalDistanceMeters: originalMeters,
+          totalDistanceMeters: cmpOptimized,
+          originalDistanceMeters: cmpOriginal,
         );
         // "Ver no mapa" reenquadra a rota com a animação de câmera.
         if (viewOnMap == true && mounted) {

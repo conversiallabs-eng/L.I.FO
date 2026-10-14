@@ -3,11 +3,23 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
 import '../../../../core/services/geocoding_service.dart';
+import '../../../../core/services/hybrid_routing_service.dart';
 import '../../../../core/services/manifest_import_service.dart';
 import '../../../../core/utils/lifo_calculator.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../manifest_controller.dart';
+
+/// Baseline do comparativo "você economizou X km": trajeto ORIGINAL medido
+/// de dois jeitos (rua via OSRM quando há rede + linha reta de fallback),
+/// sempre na ordem do arquivo e partindo do mesmo GPS da otimização.
+typedef ImportedRouteBaseline = ({
+  double originalRoad,
+  double originalHav,
+  double? startLat,
+  double? startLng,
+});
 
 enum _GeoStatus { pending, locating, ok, fail }
 
@@ -32,15 +44,14 @@ class ImportManifestSheet extends ConsumerStatefulWidget {
 
   const ImportManifestSheet({super.key, this.startLat, this.startLng});
 
-  /// Retorna os metros do trajeto ORIGINAL (ordem do arquivo, a partir do
-  /// GPS) quando a importação conclui — null se cancelada ou com falha.
-  /// O chamador usa para o comparativo "você economizou X km".
-  static Future<double?> show(
+  /// Retorna o baseline do comparativo quando a importação conclui —
+  /// null se cancelada ou com falha.
+  static Future<ImportedRouteBaseline?> show(
     BuildContext context, {
     double? startLat,
     double? startLng,
   }) {
-    return showModalBottomSheet<double>(
+    return showModalBottomSheet<ImportedRouteBaseline>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Theme.of(context).colorScheme.surface,
@@ -61,9 +72,13 @@ class ImportManifestSheet extends ConsumerStatefulWidget {
       _ImportManifestSheetState();
 }
 
-class _ImportManifestSheetState extends ConsumerState<ImportManifestSheet> {
+class _ImportManifestSheetState extends ConsumerState<ImportManifestSheet>
+    with SingleTickerProviderStateMixin {
   final _importer = ManifestImportService();
   final _geocoding = GeocodingService();
+
+  // Pulso do glow do loader (respiração contínua, barato: só o anel).
+  late final AnimationController _glowController;
 
   String? _fileName;
   bool _parsing = false;
@@ -84,8 +99,18 @@ class _ImportManifestSheetState extends ConsumerState<ImportManifestSheet> {
   int get _totalUnits => _stops.fold(0, (a, s) => a + s.imported.totalUnits);
 
   @override
+  void initState() {
+    super.initState();
+    _glowController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1300),
+    )..repeat(reverse: true);
+  }
+
+  @override
   void dispose() {
     _cancelRequested = true;
+    _glowController.dispose();
     super.dispose();
   }
 
@@ -314,9 +339,22 @@ class _ImportManifestSheetState extends ConsumerState<ImportManifestSheet> {
     }
     if (cleanFormatName.isEmpty) cleanFormatName = 'Manifesto';
 
-    // Km do trajeto ORIGINAL: ordem do arquivo, partindo do mesmo GPS.
-    // É a base honesta do comparativo "economizou X km com o LIFO".
-    final originalMeters = _originalPathMeters(resolved, startLat, startLng);
+    // Baseline honesta: mesma origem (GPS) e mesma ordem (arquivo).
+    // Rua via OSRM quando há rede; linha reta de fallback quando não há.
+    final originalHav = _originalPathMeters(resolved, startLat, startLng);
+    double originalRoad = -1;
+    if (gpsOk) {
+      if (mounted) {
+        setState(() {
+          _confirmStatusText = 'Medindo trajeto original pelas ruas...';
+        });
+      }
+      final pts = <LatLng>[
+        LatLng(startLat, startLng),
+        for (final s in resolved) LatLng(s.latitude, s.longitude),
+      ];
+      originalRoad = await HybridRoutingService().roadDistanceForPoints(pts);
+    }
 
     final ok = await ref.read(manifestControllerProvider.notifier).importManifest(
           formatName: cleanFormatName,
@@ -345,7 +383,12 @@ class _ImportManifestSheetState extends ConsumerState<ImportManifestSheet> {
           ),
         );
       }
-      Navigator.of(context).pop(originalMeters);
+      Navigator.of(context).pop((
+        originalRoad: originalRoad,
+        originalHav: originalHav,
+        startLat: startLat,
+        startLng: startLng,
+      ));
     } else {
       setState(() => _confirming = false);
       final msg = ref.read(manifestControllerProvider).errorMessage;
@@ -436,17 +479,21 @@ class _ImportManifestSheetState extends ConsumerState<ImportManifestSheet> {
             const Divider(height: 1),
             Flexible(
               child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 320),
+                duration: const Duration(milliseconds: 420),
                 switchInCurve: Curves.easeOutCubic,
                 switchOutCurve: Curves.easeInCubic,
                 transitionBuilder: (child, animation) => FadeTransition(
                   opacity: animation,
                   child: SlideTransition(
                     position: Tween<Offset>(
-                      begin: const Offset(0, 0.06),
+                      begin: const Offset(0, 0.14),
                       end: Offset.zero,
                     ).animate(animation),
-                    child: child,
+                    child: ScaleTransition(
+                      scale: Tween<double>(begin: 0.97, end: 1.0)
+                          .animate(animation),
+                      child: child,
+                    ),
                   ),
                 ),
                 child: KeyedSubtree(
@@ -600,61 +647,75 @@ class _ImportManifestSheetState extends ConsumerState<ImportManifestSheet> {
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 132,
-            height: 132,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: AppColors.circuitBlue.withValues(alpha: 0.45),
-                  blurRadius: 32,
-                  spreadRadius: 4,
-                ),
-              ],
-            ),
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                SizedBox(
-                  width: 132,
-                  height: 132,
-                  child: CircularProgressIndicator(
-                    value: _confirming ? null : (progress > 0 ? progress : null),
-                    strokeWidth: 10,
-                    backgroundColor:
-                        isDark ? AppColors.carbonBorder : AppColors.lightBorder,
-                    valueColor: const AlwaysStoppedAnimation<Color>(
-                      AppColors.circuitBlueGlow,
-                    ),
-                  ),
-                ),
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _confirming ? '$current' : '$pct%',
-                      style: const TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.w900,
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: 0.0, end: 1.0),
+        duration: const Duration(milliseconds: 450),
+        curve: Curves.easeOutBack,
+        builder: (ctx, t, child) => Opacity(
+          opacity: t.clamp(0.0, 1.0),
+          child: Transform.scale(scale: 0.85 + 0.15 * t, child: child),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            AnimatedBuilder(
+              animation: _glowController,
+              builder: (ctx, child) => Container(
+                width: 132,
+                height: 132,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppColors.circuitBlue.withValues(
+                        alpha: 0.30 + 0.25 * _glowController.value,
                       ),
-                    ),
-                    Text(
-                      '$current/$total paradas',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: subColor,
-                        fontWeight: FontWeight.w600,
-                      ),
+                      blurRadius: 24 + 16 * _glowController.value,
+                      spreadRadius: 4,
                     ),
                   ],
                 ),
-              ],
+                child: child,
+              ),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  SizedBox(
+                    width: 132,
+                    height: 132,
+                    child: CircularProgressIndicator(
+                      value: _confirming ? null : (progress > 0 ? progress : null),
+                      strokeWidth: 10,
+                      backgroundColor:
+                          isDark ? AppColors.carbonBorder : AppColors.lightBorder,
+                      valueColor: const AlwaysStoppedAnimation<Color>(
+                        AppColors.circuitBlueGlow,
+                      ),
+                    ),
+                  ),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _confirming ? '$current' : '$pct%',
+                        style: const TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      Text(
+                        '$current/$total paradas',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: subColor,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
           const SizedBox(height: 16),
           AnimatedSwitcher(
             duration: const Duration(milliseconds: 250),
@@ -706,6 +767,7 @@ class _ImportManifestSheetState extends ConsumerState<ImportManifestSheet> {
             ),
           ],
         ],
+      ),
       ),
     );
   }
