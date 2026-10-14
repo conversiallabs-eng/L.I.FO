@@ -624,9 +624,13 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
     bool isDark,
   ) async {
     final ctrl = TextEditingController();
-    final code = await showDialog<String>(
+    final code = await showGeneralDialog<String>(
       context: context,
-      builder: (dCtx) => AlertDialog(
+      barrierDismissible: true,
+      barrierLabel: 'Digitar rastreio',
+      barrierColor: Colors.black.withValues(alpha: 0.6),
+      transitionDuration: const Duration(milliseconds: 240),
+      pageBuilder: (dCtx, _, _) => AlertDialog(
         backgroundColor: isDark ? AppColors.darkSurface : AppColors.lightSurface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text(
@@ -666,6 +670,19 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
             child: const Text('Atribuir'),
           ),
         ],
+      ),
+      transitionBuilder: (_, animation, _, child) => FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.92, end: 1.0).animate(
+            CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutBack,
+              reverseCurve: Curves.easeIn,
+            ),
+          ),
+          child: child,
+        ),
       ),
     );
     if (code == null || code.isEmpty || !context.mounted) return;
@@ -1059,12 +1076,25 @@ class _SlotSheetState extends ConsumerState<_SlotSheet> {
   }
 
   /// Telinha da câmera flutuando sobre o painel: bipou, já entrou na lista.
+  /// Entra com o fundo escurecendo em fade e um leve "pop" no card.
   Widget _buildCameraPanel(bool isDark, String label) {
     return Positioned.fill(
-      child: Container(
-        color: Colors.black.withValues(alpha: 0.7),
-        alignment: Alignment.center,
-        padding: const EdgeInsets.all(20),
+      child: TweenAnimationBuilder<double>(
+        tween: Tween<double>(begin: 0, end: 1),
+        duration: const Duration(milliseconds: 260),
+        curve: Curves.easeOutCubic,
+        builder: (context, t, child) => Container(
+          color: Colors.black.withValues(alpha: 0.7 * t),
+          alignment: Alignment.center,
+          padding: const EdgeInsets.all(20),
+          child: Opacity(
+            opacity: t,
+            child: Transform.scale(
+              scale: 0.9 + 0.1 * t,
+              child: child,
+            ),
+          ),
+        ),
         child: Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
