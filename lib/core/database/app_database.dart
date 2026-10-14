@@ -437,6 +437,25 @@ class AppDatabase {
     return count > 0;
   }
 
+  /// Remove o volume do compartimento escolhido pelo usuário e o devolve ao
+  /// compartimento automático do LIFO. O status de carga é preservado.
+  Future<bool> clearPackageSlot({
+    required String packageId,
+    required String autoSlotLabel,
+  }) async {
+    final db = await database;
+    final count = await db.update(
+      'package_items',
+      {
+        'slot_user_assigned': 0,
+        'spatial_slot': autoSlotLabel,
+      },
+      where: 'id = ?',
+      whereArgs: [packageId],
+    );
+    return count > 0;
+  }
+
   // Inserts a new package directly into an existing stop (for scanner-based linking)
   Future<void> insertPackageForStop({
     required String packageId,

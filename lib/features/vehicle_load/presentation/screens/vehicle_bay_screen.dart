@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../../../core/theme/app_colors.dart';
-import '../../../cargo_scanner/presentation/screens/cargo_scanner_screen.dart';
 import '../../../route_manifest/domain/models/spatial_slot.dart';
 import '../../../route_manifest/domain/models/delivery_stop.dart';
 import '../../../route_manifest/domain/models/package_item.dart';
@@ -196,10 +196,15 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
 
     Widget bay(SpatialSlotType type) {
       final slot = SpatialSlot.fromType(type);
+      // A planta só mostra o que o usuário realmente colocou no baú. O
+      // compartimento automático do LIFO não é uma colocação real.
+      final placed = (slotPkgs[type] ?? [])
+          .where((p) => p.slotUserAssigned)
+          .toList();
       return Expanded(
         child: _buildSlotBayCard(
           slot: slot,
-          packages: slotPkgs[type] ?? [],
+          packages: placed,
           stopsById: stopsById,
           isDark: isDark,
         ),
@@ -296,7 +301,7 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
 
     return InkWell(
       // Sempre abre: quadrado vazio também bipaatribui e renomeia.
-      onTap: () => _showSlotSheet(context, slot, packages, stopsById, isDark),
+      onTap: () => _showSlotSheet(context, slot, isDark),
       borderRadius: BorderRadius.circular(12),
       child: Container(
         height: 132,
@@ -467,7 +472,7 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
 
     return InkWell(
       borderRadius: BorderRadius.circular(12),
-      onTap: () => _showSlotSheet(context, slot, packages, stopsById, isDark),
+      onTap: () => _showSlotSheet(context, slot, isDark),
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
@@ -684,15 +689,9 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
     );
   }
 
-  /// Ações do quadrado: bipar, digitar, renomear + volumes atribuídos.
-  void _showSlotSheet(
-    BuildContext context,
-    SpatialSlot slot,
-    List<PackageItem> packages,
-    Map<String, DeliveryStop> stopsById,
-    bool isDark,
-  ) {
-    final label = _slotLabel(slot);
+  /// Abre o painel do compartimento. A altura é fixa e a lista de volumes
+  /// rola por conta própria; bipar/digitar entra na lista na hora.
+  void _showSlotSheet(BuildContext context, SpatialSlot slot, bool isDark) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -700,218 +699,473 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) {
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 20,
-            right: 20,
-            top: 12,
-            bottom: MediaQuery.of(ctx).padding.bottom + 20,
+      builder: (_) => _SlotSheet(
+        slot: slot,
+        onRename: () => _renameSlotDialog(context, slot, isDark),
+        onTypeCode: () => _typeCodeDialog(context, slot, isDark),
+      ),
+    );
+  }
+}
+
+/// Painel de um compartimento do baú. A lista de volumes tem rolagem própria
+/// e a câmera abre numa telinha flutuante sobre o painel — bipou, já entrou.
+class _SlotSheet extends ConsumerStatefulWidget {
+  final SpatialSlot slot;
+  final VoidCallback onRename;
+  final VoidCallback onTypeCode;
+
+  const _SlotSheet({
+    required this.slot,
+    required this.onRename,
+    required this.onTypeCode,
+  });
+
+  @override
+  ConsumerState<_SlotSheet> createState() => _SlotSheetState();
+}
+
+class _SlotSheetState extends ConsumerState<_SlotSheet> {
+  MobileScannerController? _camera;
+  bool _cameraOpen = false;
+  bool _processing = false;
+  String _lastCode = '';
+  DateTime? _lastScanAt;
+  int _addedCount = 0;
+  String? _feedback;
+  bool _feedbackOk = true;
+
+  SpatialSlot get _slot => widget.slot;
+
+  @override
+  void dispose() {
+    _camera?.dispose();
+    super.dispose();
+  }
+
+  /// Volumes que o usuário realmente colocou neste compartimento.
+  List<PackageItem> _placedVolumes(List<DeliveryStop> stops) {
+    final result = <PackageItem>[];
+    for (final stop in stops) {
+      for (final pkg in stop.packages) {
+        if (pkg.slotUserAssigned && pkg.spatialSlot.type == _slot.type) {
+          result.add(pkg);
+        }
+      }
+    }
+    return result;
+  }
+
+  Map<String, DeliveryStop> _stopsById(List<DeliveryStop> stops) =>
+      {for (final s in stops) s.id: s};
+
+  void _openCamera() {
+    _camera ??= MobileScannerController(
+      detectionSpeed: DetectionSpeed.normal,
+      facing: CameraFacing.back,
+    );
+    setState(() {
+      _cameraOpen = true;
+      _feedback = null;
+    });
+  }
+
+  Future<void> _closeCamera() async {
+    await _camera?.stop();
+    if (!mounted) return;
+    setState(() => _cameraOpen = false);
+  }
+
+  void _onDetect(BarcodeCapture capture) {
+    final raw =
+        capture.barcodes.isEmpty ? null : capture.barcodes.first.rawValue;
+    if (raw == null || raw.trim().isEmpty) return;
+    final code = raw.trim();
+    final now = DateTime.now();
+    // A câmera repete o mesmo código várias vezes por segundo.
+    if (code == _lastCode &&
+        _lastScanAt != null &&
+        now.difference(_lastScanAt!).inMilliseconds < 1500) {
+      return;
+    }
+    _lastScanAt = now;
+    _addCode(code);
+  }
+
+  /// Atribui o código a este compartimento. Bipou, já entrou na lista.
+  Future<PackageItem?> _addCode(String code) async {
+    final clean = code.trim();
+    if (clean.isEmpty || _processing) return null;
+    _processing = true;
+    _lastCode = clean;
+
+    final pkg = await ref
+        .read(manifestControllerProvider.notifier)
+        .assignPackageToSlot(barcode: clean, slot: _slot);
+
+    if (!mounted) {
+      _processing = false;
+      return pkg;
+    }
+    setState(() {
+      _processing = false;
+      _feedbackOk = pkg != null;
+      _feedback =
+          pkg != null ? '✓ $clean adicionado' : '$clean não está no manifesto';
+      if (pkg != null) _addedCount++;
+    });
+    return pkg;
+  }
+
+  /// "X" do volume: tira do compartimento (o usuário se enganou). O volume
+  /// volta ao compartimento automático e segue marcado como carregado.
+  Future<void> _removeVolume(PackageItem pkg) async {
+    final ok = await ref
+        .read(manifestControllerProvider.notifier)
+        .unassignPackageFromSlot(pkg.barcode);
+    if (!mounted) return;
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível remover este volume.'),
+          backgroundColor: AppColors.statusDanger,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final names = ref.watch(slotNamesProvider);
+    final stops =
+        ref.watch(manifestControllerProvider).currentVersion?.stops ??
+            const <DeliveryStop>[];
+    final stopsById = _stopsById(stops);
+    final volumes = _placedVolumes(stops);
+    final label = SlotNamesNotifier.labelOf(names, _slot);
+    final media = MediaQuery.of(context);
+
+    return SizedBox(
+      height: media.size.height * 0.85,
+      child: Stack(
+        children: [
+          Padding(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 12,
+              bottom: 16 + MediaQuery.viewPaddingOf(context).bottom,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 38,
+                    height: 4.5,
+                    decoration: BoxDecoration(
+                      color:
+                          isDark ? AppColors.darkBorder : AppColors.lightBorder,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Container(
+                      width: 14,
+                      height: 14,
+                      decoration: const BoxDecoration(
+                        color: AppColors.primaryBlue,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Renomear local',
+                      icon: const Icon(Icons.edit_outlined, size: 20),
+                      onPressed: widget.onRename,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${_slot.description} • Carrega #${_slot.loadingOrder} • Descarrega #${_slot.unloadingOrder}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isDark
+                        ? AppColors.darkTextSecondary
+                        : AppColors.lightTextSecondary,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.qr_code_scanner, size: 18),
+                        label: const Text('Bipar etiqueta'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primaryBlue,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        onPressed: _openCamera,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.keyboard_alt_outlined, size: 18),
+                        label: const Text('Digitar código'),
+                        style: OutlinedButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                        ),
+                        onPressed: widget.onTypeCode,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Volumes neste local (${volumes.length}):',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: volumes.isEmpty
+                      ? Center(
+                          child: Text(
+                            'Nada aqui ainda.\nBipe uma etiqueta ou digite o rastreio.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isDark
+                                  ? AppColors.darkTextSecondary
+                                  : AppColors.lightTextSecondary,
+                            ),
+                          ),
+                        )
+                      : ListView.separated(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          itemCount: volumes.length,
+                          separatorBuilder: (_, _) => const SizedBox(height: 8),
+                          itemBuilder: (_, index) {
+                            final pkg = volumes[index];
+                            return _buildVolumeTile(
+                              pkg,
+                              stopsById[pkg.stopId],
+                              isDark,
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+          ),
+          if (_cameraOpen) _buildCameraPanel(isDark, label),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVolumeTile(
+    PackageItem pkg,
+    DeliveryStop? stop,
+    bool isDark,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: isDark
+            ? AppColors.darkSurfaceElevated
+            : AppColors.lightSurfaceElevated,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.black, width: 1),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.inventory_2_outlined,
+            size: 18,
+            color: AppColors.primaryBlue,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  pkg.barcode,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+                Text(
+                  stop != null
+                      ? 'Parada #${stop.sequenceIndex} • ${stop.recipientName}'
+                      : pkg.description,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: isDark
+                        ? AppColors.darkTextSecondary
+                        : AppColors.lightTextSecondary,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          Text(
+            '${pkg.weightKg} kg',
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+          ),
+          IconButton(
+            tooltip: 'Excluir do compartimento',
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.close, size: 20),
+            onPressed: () => _removeVolume(pkg),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Telinha da câmera flutuando sobre o painel: bipou, já entrou na lista.
+  Widget _buildCameraPanel(bool isDark, String label) {
+    return Positioned.fill(
+      child: Container(
+        color: Colors.black.withValues(alpha: 0.7),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.all(20),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color:
+                isDark ? AppColors.darkSurfaceElevated : AppColors.lightSurface,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: const [
+              BoxShadow(
+                color: Colors.black38,
+                blurRadius: 18,
+                offset: Offset(0, 6),
+              ),
+            ],
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Center(
-                child: Container(
-                  width: 38,
-                  height: 4.5,
-                  decoration: BoxDecoration(
-                    color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
               Row(
                 children: [
-                  Container(
-                    width: 14,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      color: AppColors.primaryBlue,
-                      shape: BoxShape.circle,
-                    ),
+                  const Icon(
+                    Icons.qr_code_scanner,
+                    size: 18,
+                    color: AppColors.primaryBlue,
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      label,
+                      'Bipando para $label',
                       style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   IconButton(
-                    tooltip: 'Renomear local',
-                    icon: const Icon(Icons.edit_outlined, size: 20),
-                    onPressed: () {
-                      Navigator.of(ctx).pop();
-                      _renameSlotDialog(context, slot, isDark);
-                    },
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.of(ctx).pop(),
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.close, size: 20),
+                    onPressed: _closeCamera,
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
-              Text(
-                '${slot.description} • Carrega #${slot.loadingOrder} • Descarrega #${slot.unloadingOrder}',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: isDark
-                      ? AppColors.darkTextSecondary
-                      : AppColors.lightTextSecondary,
-                ),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.qr_code_scanner, size: 18),
-                      label: const Text('Bipar etiqueta'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryBlue,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: SizedBox(
+                  width: 280,
+                  height: 200,
+                  child: MobileScanner(
+                    controller: _camera!,
+                    onDetect: _onDetect,
+                    errorBuilder: (_, _) => Container(
+                      color: Colors.black,
+                      alignment: Alignment.center,
+                      child: const Padding(
+                        padding: EdgeInsets.all(12),
+                        child: Text(
+                          'Sem acesso à câmera. Use "Digitar código".',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white, fontSize: 12),
                         ),
                       ),
-                      onPressed: () {
-                        Navigator.of(ctx).pop();
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => CargoScannerScreen(
-                              assignToSlot: slot.type,
-                            ),
-                          ),
-                        );
-                      },
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.keyboard_alt_outlined, size: 18),
-                      label: const Text('Digitar código'),
-                      style: OutlinedButton.styleFrom(
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      onPressed: () {
-                        Navigator.of(ctx).pop();
-                        _typeCodeDialog(context, slot, isDark);
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Volumes neste local (${packages.length}):',
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
                 ),
               ),
               const SizedBox(height: 10),
-              if (packages.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  child: Center(
-                    child: Text(
-                      'Vazio — bipe uma etiqueta ou digite o rastreio para atribuir volumes aqui.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isDark
+              SizedBox(
+                height: 18,
+                child: Text(
+                  _feedback ?? 'Aponte para a etiqueta',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: _feedback == null
+                        ? (isDark
                             ? AppColors.darkTextSecondary
-                            : AppColors.lightTextSecondary,
-                      ),
-                    ),
+                            : AppColors.lightTextSecondary)
+                        : (_feedbackOk
+                            ? AppColors.primaryBlue
+                            : AppColors.statusDanger),
                   ),
-                )
-              else
-                Flexible(
-                  child: ListView.separated(
-                    shrinkWrap: true,
-                    itemCount: packages.length,
-                    separatorBuilder: (_, _) =>
-                        const SizedBox(height: 8),
-                    itemBuilder: (_, index) {
-                      final pkg = packages[index];
-                      final stop = stopsById[pkg.stopId];
-                      return Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: isDark
-                              ? AppColors.darkSurfaceElevated
-                              : AppColors.lightSurfaceElevated,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.black, width: 1),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              pkg.status == PackageStatus.loaded
-                                  ? Icons.check_circle
-                                  : Icons.inventory_2_outlined,
-                              size: 18,
-                              color: pkg.status == PackageStatus.loaded
-                                  ? AppColors.primaryBlue
-                                  : AppColors.primaryBlueLight,
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    pkg.barcode,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                  Text(
-                                    stop != null
-                                        ? 'Parada #${stop.sequenceIndex} • ${stop.recipientName}'
-                                        : pkg.description,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: isDark
-                                          ? AppColors.darkTextSecondary
-                                          : AppColors.lightTextSecondary,
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Text(
-                              '${pkg.weightKg} kg',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
+              ),
+              Text(
+                '$_addedCount adicionado(s) neste compartimento',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: isDark
+                      ? AppColors.darkTextMuted
+                      : AppColors.lightTextMuted,
+                ),
+              ),
             ],
           ),
-        );
-      },
+        ),
+      ),
     );
   }
 }

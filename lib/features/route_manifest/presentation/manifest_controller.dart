@@ -531,6 +531,17 @@ class ManifestNotifier extends StateNotifier<ManifestState> {
     return updated;
   }
 
+  /// "X" do painel do baú: tira o volume do compartimento escolhido e o
+  /// devolve ao compartimento automático. Segue marcado como carregado.
+  Future<bool> unassignPackageFromSlot(String barcode) async {
+    final ok = await _repository.unassignPackageFromSlot(barcode);
+    if (!ok) return false;
+    HapticFeedback.selectionClick();
+    final fresh = await _repository.getOrInitCurrentManifest();
+    state = state.copyWith(currentVersion: fresh ?? state.currentVersion);
+    return true;
+  }
+
   Future<void> updateStopStatus(String stopId, StopStatus newStatus) async {
     final curVer = state.currentVersion;
     if (curVer == null) return;

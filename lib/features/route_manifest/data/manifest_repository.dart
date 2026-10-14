@@ -453,6 +453,29 @@ class ManifestRepository {
     );
   }
 
+  /// Desfaz a atribuição manual de compartimento de um volume: ele volta ao
+  /// compartimento automático do LIFO e o local some dos cards de rota.
+  /// O status de carga é preservado. Usado no "X" do painel do baú.
+  Future<bool> unassignPackageFromSlot(String barcode) async {
+    final current = await _db.getCurrentVersion();
+    if (current == null) return false;
+    final code = barcode.trim().toUpperCase();
+    final totalStops = current.stops.length;
+    for (final stop in current.stops) {
+      for (final pkg in stop.packages) {
+        if (pkg.barcode.trim().toUpperCase() == code) {
+          final autoSlot =
+              SpatialSlot.slotForDeliverySequence(stop.sequenceIndex, totalStops);
+          return _db.clearPackageSlot(
+            packageId: pkg.id,
+            autoSlotLabel: autoSlot.label,
+          );
+        }
+      }
+    }
+    return false;
+  }
+
   Future<void> updateVersionLabel(String versionId, String newLabel) async {
     await _db.database.then((db) => db.rawUpdate(
       'UPDATE manifest_versions SET label = ? WHERE id = ?',
