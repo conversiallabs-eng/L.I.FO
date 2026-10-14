@@ -197,6 +197,12 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   }
   StreamSubscription<Position>? _positionSub;
   bool _followGps = true;
+  // Recentralizar automático (seta azul): ARMADO = fica azul p/ sempre até
+  // tocar de novo. Mexer no mapa só solta a câmera por alguns segundos e
+  // ela volta sozinha p/ trás do cursor. Separado de _followGps/_courseUp,
+  // que são o estado transitório (seguindo agora ou câmera livre).
+  bool _autoRecenterArmed = false;
+  static const _kAutoRecenterDelay = Duration(seconds: 6);
   bool _didAutoFit = false;
   bool _didAutoReoptimize = false;
   double? _heading;
@@ -382,20 +388,34 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   }
 
   /// Chamado sempre que o usuário toca ou arrasta o mapa manualmente.
-  /// A recentralização automática SÓ acontece se o ícone de cursor (CourseUp)
-  /// estiver ativo. Se o usuário estiver em free-look, a câmera não volta.
+  /// Com a seta ARMADA (azul), a câmera solta por alguns segundos p/ olhar
+  /// livre e volta sozinha p/ trás do cursor — a seta continua azul.
+  /// Com a seta desligada, a câmera fica livre até tocar na seta.
   void _onMapUserInteracted() {
     if (!_isNavigating) return;
 
-    // Cancela qualquer timer de recentralização pendente
+    // Cancela qualquer retorno pendente (novo gesto = nova contagem)
     _autoRecenteringTimer?.cancel();
     _autoRecenteringTimer = null;
 
-    // Desativa cursor/follow → o botão de navegação apaga e câmera fica livre
+    // Solta a câmera agora (transitório — NÃO desarma a seta)
     if (_followGps || _courseUp) {
       setState(() {
         _followGps = false;
         _courseUp = false;
+      });
+    }
+
+    // Armada: agenda a volta sozinha p/ trás do cursor.
+    if (_autoRecenterArmed) {
+      _autoRecenteringTimer = Timer(_kAutoRecenterDelay, () {
+        if (!mounted || !_autoRecenterArmed || !_isNavigating) return;
+        if (_currentLocation == null) return;
+        setState(() {
+          _followGps = true;
+          _courseUp = true;
+        });
+        _flyBehindCursor(durationMs: 800);
       });
     }
   }
@@ -777,27 +797,46 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     }
   }
 
+  /// Seta de recentralizar automático: liga = azul P/ SEMPRE (até tocar de
+  /// novo). Ligar engata a câmera atrás do cursor na hora; mexer no mapa
+  /// solta por alguns segundos e ela volta sozinha.
   void _toggleCourseUp() {
-    // Modo navegação Course-Up estilo Circuit: câmera gira com a direção do veículo.
-    setState(() {
-      _courseUp = !_courseUp;
-      _followGps = true;
-    });
-    if (_courseUp) {
-      final course = _getForwardCourse();
-      final targetRotation = (360.0 - course) % 360.0;
-      if (_currentLocation != null) {
-        final camCenter = _isNavigating
-            ? _getNavigationCameraCenter(_currentLocation!, course)
-            : _currentLocation!;
-        _animatedMapMove(camCenter, _isNavigating ? 17.0 : 16.5, destRotation: targetRotation, durationMs: 650);
-      } else {
-        try {
-          _mapController.rotate(targetRotation);
-        } catch (_) {}
-      }
-    } else {
+    _setAutoRecenterArmed(!_autoRecenterArmed);
+  }
+
+  void _setAutoRecenterArmed(bool armed) {
+    if (!mounted) return;
+    _autoRecenteringTimer?.cancel();
+    _autoRecenteringTimer = null;
+    if (!armed) {
+      setState(() {
+        _autoRecenterArmed = false;
+        _followGps = false;
+        _courseUp = false;
+      });
       _animatedMapMove(_mapController.camera.center, _mapController.camera.zoom, destRotation: 0, durationMs: 500);
+      return;
+    }
+    setState(() {
+      _autoRecenterArmed = true;
+      _followGps = true;
+      _courseUp = true;
+    });
+    _flyBehindCursor(durationMs: 650);
+  }
+
+  /// Voa a câmera p/ trás do cursor (posição + zoom + rotação do modo atual).
+  void _flyBehindCursor({int durationMs = 650}) {
+    if (!mounted || _currentLocation == null) return;
+    final course = _getForwardCourse();
+    final targetRotation = (360.0 - course) % 360.0;
+    if (_isNavigating) {
+      final camCenter = _getNavigationCameraCenter(_currentLocation!, course);
+      _animatedMapMove(camCenter, 17.2, destRotation: targetRotation, durationMs: durationMs);
+    } else if (_courseUp) {
+      _animatedMapMove(_currentLocation!, 16.5, destRotation: targetRotation, durationMs: durationMs);
+    } else {
+      _animatedMapMove(_currentLocation!, _mapController.camera.zoom, durationMs: durationMs);
     }
   }
 
@@ -1571,10 +1610,13 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   /// Zera navegação + HUD + progresso de rua (sem rota não há o que guiar).
   void _resetNavigationState() {
     _hudHideTimer?.cancel();
+    _autoRecenteringTimer?.cancel();
+    _autoRecenteringTimer = null;
     VoiceGuidance.instance.stop();
     if (!mounted) return;
     setState(() {
       _isNavigating = false;
+      _autoRecenterArmed = false;
       _courseUp = false;
       _selectedStopIndex = 0;
       _legPolyline = [];
@@ -1617,14 +1659,17 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     setState(() {
       _isNavigating = true;
       // forceFollow = true: botão Navegar pressionado explicitamente → sempre
-      //   reativa cursor e follow, independente do estado anterior.
-      // forceFollow = false: mudança de parada via swipe → só ativa na primeira
+      //   ARMA o recentralizar (seta azul) e engata atrás do cursor.
+      // forceFollow = false: mudança de parada via swipe → só arma na primeira
       //   vez que a navegação começa; se o usuário estava em free-look, mantém.
       if (forceFollow || !alreadyNavigating) {
+        _autoRecenterArmed = true;
         _courseUp = true;
         _followGps = true;
       }
     });
+    _autoRecenteringTimer?.cancel();
+    _autoRecenteringTimer = null;
 
     // Move a câmera se cursor estiver ativo (pode ter sido reativado acima)
     if (_courseUp && _followGps) {
@@ -1852,10 +1897,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                           _buildFloatingCircleButton(
                             context: context,
                             icon: Icons.navigation,
-                            tooltip: _courseUp
-                                ? 'Recentralizar automático: LIGADO (toque p/ soltar a câmera)'
+                            tooltip: _autoRecenterArmed
+                                ? 'Recentralizar automático LIGADO (fica azul p/ sempre — toque p/ desligar)'
                                 : 'Recentralizar automático: câmera atrás do cursor',
-                            isActive: _courseUp,
+                            isActive: _autoRecenterArmed,
                             onTap: _toggleCourseUp,
                           ),
                           if (_currentLocation != null) ...[
@@ -1956,9 +2001,15 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                           if (!isCurrentlyCompleted) {
                             final allDone = stops.every((s) => s.id == stops[curIdx].id || s.status == StopStatus.completed);
                             if (allDone) {
+                              _autoRecenteringTimer?.cancel();
+                              _autoRecenteringTimer = null;
+                              _hudHideTimer?.cancel();
+                              VoiceGuidance.instance.stop();
                               setState(() {
                                 _isNavigating = false;
+                                _autoRecenterArmed = false;
                                 _courseUp = false;
+                                _hudVisible = false;
                                 _cardDragDx = 0.0;
                               });
                               _animatedMapMove(_mapController.camera.center, _mapController.camera.zoom, destRotation: 0, durationMs: 400);
@@ -1997,9 +2048,15 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                           );
                         },
                         onClose: () {
+                          _autoRecenteringTimer?.cancel();
+                          _autoRecenteringTimer = null;
+                          _hudHideTimer?.cancel();
+                          VoiceGuidance.instance.stop();
                           setState(() {
                             _isNavigating = false;
+                            _autoRecenterArmed = false;
                             _courseUp = false;
+                            _hudVisible = false;
                             _cardDragDx = 0.0;
                             _lastAutoScrolledIndex = null;
                           });
