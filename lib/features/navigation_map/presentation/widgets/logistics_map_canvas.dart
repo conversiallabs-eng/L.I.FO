@@ -57,12 +57,16 @@ class LogisticsMapCanvas extends StatelessWidget {
     this.onUserInteraction,
   });
 
-  // Tiles 100% sem API key (CARTO passou a exigir key desde 25/09/2026).
-  // - Light: OSM Standard (estilo Google/iFood: fundo claro neutro, água
-  //   azul, parques verdes, vias em amarelo/laranja — sem o bege-deserto).
+  // Tiles sem API key.
+  // - Light: rua do Google (visual idêntico ao app do Google Maps/iFood).
+  //   Endpoint não-oficial: se o Google recusar, o fallback OSM entra
+  //   sozinho (fundo claro, água azul, vias amarelas).
   // - Dark: ESRI Canvas Dark Gray Base + Reference (grafite, combina com a UI).
   // - Satellite: ESRI World Imagery.
-  static const String _osmStandard =
+  static const String _googleRoads =
+      'https://mt{s}.google.com/vt/lyrs=m&hl=pt-BR&x={x}&y={y}&z={z}';
+  static const List<String> _googleSubdomains = ['0', '1', '2', '3'];
+  static const String _osmFallback =
       'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
   static const String _esriDarkBase =
       'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}';
@@ -290,14 +294,16 @@ class LogisticsMapCanvas extends StatelessWidget {
                   errorTileCallback: (tile, error, stackTrace) {},
                 ),
               ] else ...[
-                // Rua estilo OSM (1 camada só: rótulos já vêm no tile).
+                // Rua do Google (fallback OSM se recusar).
                 TileLayer(
-                  urlTemplate: _osmStandard,
+                  urlTemplate: _googleRoads,
+                  subdomains: _googleSubdomains,
+                  fallbackUrl: _osmFallback,
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
                   retinaMode: false,
                   maxZoom: 18,
-                  maxNativeZoom: 19,
+                  maxNativeZoom: 20,
                   keepBuffer: 4,
                   panBuffer: 2,
                   tileDisplay: const TileDisplay.fadeIn(),
@@ -409,7 +415,7 @@ class LogisticsMapCanvas extends StatelessWidget {
                   ? '© Esri, Maxar, Earthstar Geographics'
                   : (isDark
                       ? '© Esri, © OpenStreetMap'
-                      : '© OpenStreetMap contributors'),
+                      : '© Google'),
               style: const TextStyle(
                 color: Colors.white70,
                 fontSize: 9,

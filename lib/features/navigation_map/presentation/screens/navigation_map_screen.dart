@@ -84,7 +84,7 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
             children: [
               // Tiles sem API key + cache em disco (sem retina simulada nas
               // camadas com rótulo: ela encolhe os nomes das ruas à metade).
-              // noturno = ESRI Dark Gray, claro = OSM Standard (estilo Google).
+              // noturno = ESRI Dark Gray, claro = rua do Google (fallback OSM).
               if (isCabinNight) ...[
                 TileLayer(
                   urlTemplate:
@@ -111,11 +111,14 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
               ] else ...[
                 TileLayer(
                   urlTemplate:
+                      'https://mt{s}.google.com/vt/lyrs=m&hl=pt-BR&x={x}&y={y}&z={z}',
+                  subdomains: const ['0', '1', '2', '3'],
+                  fallbackUrl:
                       'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
                   maxZoom: 18,
-                  maxNativeZoom: 19,
+                  maxNativeZoom: 20,
                   keepBuffer: 4,
                   panBuffer: 2,
                   tileDisplay: const TileDisplay.fadeIn(),
