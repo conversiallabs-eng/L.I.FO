@@ -63,7 +63,6 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
         ? stops[_activeStopIndex.clamp(0, stops.length - 1)]
         : null;
 
-    final retina = RetinaMode.isHighDensity(context);
     final tileProvider = TileCache.instance.provider;
 
     return Scaffold(
@@ -83,7 +82,8 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
                   : AppColors.lightBackground,
             ),
             children: [
-              // Tiles sem API key + retina + cache em disco:
+              // Tiles sem API key + cache em disco (sem retina simulada nas
+              // camadas com rótulo: ela encolhe os nomes das ruas à metade).
               // noturno = ESRI Dark Gray, claro = ESRI Street Map (colorido).
               if (isCabinNight) ...[
                 TileLayer(
@@ -91,8 +91,7 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
                       'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
-                  retinaMode: retina,
-                  maxZoom: 19,
+                  maxZoom: 18,
                   maxNativeZoom: 16,
                   keepBuffer: 4,
                   panBuffer: 2,
@@ -103,8 +102,7 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
                       'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
-                  retinaMode: retina,
-                  maxZoom: 19,
+                  maxZoom: 18,
                   maxNativeZoom: 16,
                   keepBuffer: 4,
                   panBuffer: 2,
@@ -116,8 +114,7 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
                       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
-                  retinaMode: retina,
-                  maxZoom: 19,
+                  maxZoom: 18,
                   maxNativeZoom: 19,
                   keepBuffer: 4,
                   panBuffer: 2,

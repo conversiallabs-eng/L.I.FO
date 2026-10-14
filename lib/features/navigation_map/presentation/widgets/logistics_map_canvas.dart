@@ -213,9 +213,11 @@ class LogisticsMapCanvas extends StatelessWidget {
       }
     }
 
-    // Retina: em telas de alta densidade, compõe cada tile com 4 tiles
-    // do zoom acima (nítido como o iFood). Com cache em disco o custo some
-    // após a 1ª visita.
+    // Retina simulada SÓ no satélite (foto não tem rótulo: fica nítida
+    // sem efeito colateral). Nas camadas com nome de rua ela encolhe os
+    // rótulos à metade e quadruplica os downloads no pinch — por isso fica
+    // desligada aqui: rótulo legível + zoom leve. Nitidez total + rótulos
+    // normais ao mesmo tempo só com vetor (Fase 2).
     final retina = RetinaMode.isHighDensity(context);
     final tileProvider = TileCache.instance.provider;
 
@@ -232,7 +234,8 @@ class LogisticsMapCanvas extends StatelessWidget {
               initialCenter: initialCenter,
               initialZoom: initialZoom,
               minZoom: 4.0,
-              maxZoom: 19.0,
+              // 18: acima disso o retina simulado não carrega nada (tela cinza).
+              maxZoom: 18.0,
               backgroundColor: canvasBg,
               onMapReady: onMapReady,
               onMapEvent: (event) {
@@ -266,8 +269,8 @@ class LogisticsMapCanvas extends StatelessWidget {
                   urlTemplate: _esriDarkBase,
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
-                  retinaMode: retina,
-                  maxZoom: 19,
+                  retinaMode: false,
+                  maxZoom: 18,
                   maxNativeZoom: 16,
                   keepBuffer: 4,
                   panBuffer: 2,
@@ -278,8 +281,8 @@ class LogisticsMapCanvas extends StatelessWidget {
                   urlTemplate: _esriDarkRef,
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
-                  retinaMode: retina,
-                  maxZoom: 19,
+                  retinaMode: false,
+                  maxZoom: 18,
                   maxNativeZoom: 16,
                   keepBuffer: 4,
                   panBuffer: 2,
@@ -292,8 +295,8 @@ class LogisticsMapCanvas extends StatelessWidget {
                   urlTemplate: _esriStreets,
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
-                  retinaMode: retina,
-                  maxZoom: 19,
+                  retinaMode: false,
+                  maxZoom: 18,
                   maxNativeZoom: 19,
                   keepBuffer: 4,
                   panBuffer: 2,
