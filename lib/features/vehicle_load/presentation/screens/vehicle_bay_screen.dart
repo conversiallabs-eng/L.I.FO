@@ -20,8 +20,6 @@ class VehicleBayScreen extends ConsumerStatefulWidget {
 }
 
 class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
-  int _selectedViewMode = 0; // 0 = Planta Espacial, 1 = Ordem de Carregamento
-
   String _slotLabel(SpatialSlot slot) {
     final names = ref.watch(slotNamesProvider);
     return SlotNamesNotifier.labelOf(names, slot);
@@ -50,82 +48,12 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
           ? const Center(child: CircularProgressIndicator())
           : (current == null || current.stops.isEmpty)
               ? _buildEmptyState(context, isDark)
+              // A sequência de carga já sai da ordem da rota (a parada #1 é a
+              // primeira entrega e por isso fica na porta traseira), então a
+              // tela mostra só a planta do baú.
               : SingleChildScrollView(
                   padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // View Mode Selector
-                      Container(
-                        decoration: BoxDecoration(
-                          color: isDark ? AppColors.darkSurface : AppColors.lightSurfaceElevated,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: isDark ? AppColors.darkBorder : AppColors.lightBorder),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: InkWell(
-                                onTap: () => setState(() => _selectedViewMode = 0),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(vertical: 10),
-                                  decoration: BoxDecoration(
-                                    color: _selectedViewMode == 0
-                                        ? (isDark ? AppColors.primaryBlueLight : AppColors.primaryBlue)
-                                        : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(9),
-                                  ),
-                                  child: Text(
-                                    'Planta do Veiculo',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 13,
-                                      color: _selectedViewMode == 0
-                                          ? Colors.white
-                                          : (isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: InkWell(
-                                onTap: () => setState(() => _selectedViewMode = 1),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(vertical: 10),
-                                  decoration: BoxDecoration(
-                                    color: _selectedViewMode == 1
-                                        ? (isDark ? AppColors.primaryBlueLight : AppColors.primaryBlue)
-                                        : Colors.transparent,
-                                    borderRadius: BorderRadius.circular(9),
-                                  ),
-                                  child: Text(
-                                    'Sequencia de Carga LIFO',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 13,
-                                      color: _selectedViewMode == 1
-                                          ? Colors.white
-                                          : (isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      const SizedBox(height: 16),
-
-                      if (_selectedViewMode == 0)
-                        _buildVehicleFloorplan(context, current.stops, isDark)
-                      else
-                        _buildLoadingSequenceGuide(context, current.stops, isDark),
-                    ],
-                  ),
+                  child: _buildVehicleFloorplan(context, current.stops, isDark),
                 ),
     );
   }
@@ -379,153 +307,6 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
                 ),
               ),
             ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLoadingSequenceGuide(
-    BuildContext context,
-    List<DeliveryStop> stops,
-    bool isDark,
-  ) {
-    // Sort slots by loading priority: 1 is deepest, 6 is doors
-    final List<SpatialSlot> loadSlots = List.from(SpatialSlot.allSlots)
-      ..sort((a, b) => a.loadingOrder.compareTo(b.loadingOrder));
-    final slotPkgs = _packagesBySlot(stops);
-    final stopsById = _stopsById(stops);
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: isDark ? AppColors.darkSurface : AppColors.lightSurface,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: isDark ? AppColors.darkBorder : AppColors.lightBorder),
-          ),
-          child: const Row(
-            children: [
-              Icon(Icons.info_outline, size: 20, color: AppColors.primaryBlueLight),
-              SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Principio LIFO: O ultimo pacote a entrar no veiculo e o primeiro entregue na rota. Carregue o fundo primeiro.',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        for (int i = 0; i < loadSlots.length; i++) ...[
-          _buildLoadingStepItem(
-            stepIndex: i + 1,
-            slot: loadSlots[i],
-            packages: slotPkgs[loadSlots[i].type] ?? [],
-            stopsById: stopsById,
-            isDark: isDark,
-          ),
-          const SizedBox(height: 10),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildLoadingStepItem({
-    required int stepIndex,
-    required SpatialSlot slot,
-    required List<PackageItem> packages,
-    required Map<String, DeliveryStop> stopsById,
-    required bool isDark,
-  }) {
-    final stopNames = <String>{};
-    for (final p in packages) {
-      final stop = stopsById[p.stopId];
-      if (stop != null) {
-        stopNames.add('#${stop.sequenceIndex} ${stop.recipientName}');
-      }
-    }
-
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: () => _showSlotSheet(context, slot, isDark),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: isDark ? AppColors.darkSurface : AppColors.lightSurface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.black, width: 1.4),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: AppColors.primaryBlue,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Center(
-                child: Text(
-                  '$stepIndex',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Carregar: ${_slotLabel(slot)}',
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
-                  ),
-                  const SizedBox(height: 2),
-                  if (packages.isNotEmpty)
-                    Text(
-                      '${stopNames.take(2).join(' • ')}${stopNames.length > 2 ? ' • +${stopNames.length - 2}' : ''} (${packages.length} vol)',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    )
-                  else
-                    Text(
-                      'Nenhum volume alocado neste setor',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isDark ? AppColors.darkTextMuted : AppColors.lightTextMuted,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: isDark ? AppColors.darkSurfaceElevated : AppColors.lightSurfaceElevated,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Text(
-                'Descarrega #${slot.unloadingOrder}',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
-                ),
-              ),
-            ),
           ],
         ),
       ),
