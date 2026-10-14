@@ -68,8 +68,8 @@ class MyAccountScreen extends ConsumerWidget {
               backgroundColor: const Color(0xFF2563EB),
               foregroundColor: Colors.white,
             ),
-            onPressed: () {
-              ref.read(authControllerProvider.notifier).updateProfile(
+            onPressed: () async {
+              final ok = await ref.read(authControllerProvider.notifier).updateProfile(
                 name: nameCtrl.text.trim(),
                 cpf: cpfCtrl.text.trim(),
                 rg: rgCtrl.text.trim(),
@@ -77,13 +77,24 @@ class MyAccountScreen extends ConsumerWidget {
                 billingAddress: addressCtrl.text.trim(),
                 billingCep: cepCtrl.text.trim(),
               );
-              Navigator.pop(dCtx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Dados atualizados com sucesso!'),
-                  backgroundColor: Color(0xFF2563EB),
-                ),
-              );
+              if (dCtx.mounted) Navigator.pop(dCtx);
+              if (context.mounted) {
+                final err = ref.read(authControllerProvider).errorMessage;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      ok
+                          ? 'Dados atualizados com sucesso!'
+                          : (err ?? 'O servidor recusou os dados.'),
+                    ),
+                    backgroundColor: ok
+                        ? const Color(0xFF2563EB)
+                        : const Color(0xFFDC2626),
+                    behavior: SnackBarBehavior.floating,
+                    duration: Duration(seconds: ok ? 3 : 6),
+                  ),
+                );
+              }
             },
             child: const Text('Salvar'),
           ),
@@ -312,7 +323,9 @@ class MyAccountScreen extends ConsumerWidget {
                   _buildProfileRow(
                     icon: Icons.assignment_ind_outlined,
                     label: 'RG',
-                    value: user.rg ?? '5.482.910-SSP/SC',
+                    value: (user.rg == null || user.rg!.isEmpty)
+                        ? 'Toque em editar e cadastre seu RG'
+                        : user.rg!,
                     titleColor: titleColor,
                     subColor: subColor,
                   ),
@@ -320,7 +333,9 @@ class MyAccountScreen extends ConsumerWidget {
                   _buildProfileRow(
                     icon: Icons.phone_outlined,
                     label: 'Telefone / WhatsApp',
-                    value: user.phone ?? '(48) 99182-3401',
+                    value: (user.phone == null || user.phone!.isEmpty)
+                        ? 'Toque em editar e cadastre seu telefone'
+                        : user.phone!,
                     titleColor: titleColor,
                     subColor: subColor,
                   ),
@@ -347,7 +362,9 @@ class MyAccountScreen extends ConsumerWidget {
                   _buildProfileRow(
                     icon: Icons.location_on_outlined,
                     label: 'Endereço',
-                    value: user.billingAddress ?? 'Rodovia José Carlos Daux, 4633 - Saco Grande',
+                    value: (user.billingAddress == null || user.billingAddress!.isEmpty)
+                        ? 'Toque em editar e cadastre seu endereço'
+                        : user.billingAddress!,
                     titleColor: titleColor,
                     subColor: subColor,
                   ),
@@ -355,7 +372,9 @@ class MyAccountScreen extends ConsumerWidget {
                   _buildProfileRow(
                     icon: Icons.mail_outline,
                     label: 'CEP',
-                    value: user.billingCep ?? '88032-005',
+                    value: (user.billingCep == null || user.billingCep!.isEmpty)
+                        ? 'Toque em editar e cadastre seu CEP'
+                        : user.billingCep!,
                     titleColor: titleColor,
                     subColor: subColor,
                   ),
@@ -363,7 +382,7 @@ class MyAccountScreen extends ConsumerWidget {
                   _buildProfileRow(
                     icon: Icons.apartment_outlined,
                     label: 'Cidade / UF',
-                    value: 'Florianópolis - SC',
+                    value: 'Não informado',
                     titleColor: titleColor,
                     subColor: subColor,
                   ),

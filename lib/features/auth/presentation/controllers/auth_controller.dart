@@ -93,18 +93,26 @@ class AuthController extends StateNotifier<AuthState> {
   // ─── PERSISTÊNCIA ────────────────────────────────────────────────────────
   // Espelho local mantido só como cache; leitura oficial é sempre Supabase.
 
-  Future<void> _saveProfile(UserProfile profile) async {
+  /// Salva local (sempre) + Supabase (quando dá).
+  /// Retorna null se o servidor aceitou, ou a mensagem de erro real.
+  /// O erro do servidor NUNCA mais é engolido em silêncio.
+  Future<String?> _saveProfile(UserProfile profile) async {
     try {
       // 1. SQLite local (offline-first)
       await AppDatabase.instance.saveUserProfile(profile);
-
+    } catch (_) {}
+    try {
       // 2. SharedPreferences (espelho rápido para cold start)
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_kUserPrefKey, jsonEncode(profile.toMap()));
-
-      // 3. Supabase remoto (se autenticado)
-      await SupabaseService.instance.upsertUserProfile(profile);
     } catch (_) {}
+
+    // 3. Supabase remoto (se autenticado) — erro retorna p/ o chamador exibir.
+    try {
+      return await SupabaseService.instance.upsertUserProfile(profile);
+    } catch (e) {
+      return e.toString().replaceFirst('Exception: ', '');
+    }
   }
 
   // ─── CADASTRO ────────────────────────────────────────────────────────────
@@ -318,7 +326,11 @@ class AuthController extends StateNotifier<AuthState> {
 
   // ─── ATUALIZAR PERFIL ─────────────────────────────────────────────────────
 
-  Future<void> updateProfile({
+  /// Atualiza o perfil e retorna true se o SERVIDOR aceitou.
+  /// O estado local atualiza de todo jeito (tela mostra na hora); se o
+  /// Supabase recusar, o erro real vai p/ errorMessage em vez de um
+  /// "sucesso" mentiroso — era assim que dado "sumia" no restart.
+  Future<bool> updateProfile({
     String? name,
     String? email,
     String? cpf,
@@ -336,11 +348,22 @@ class AuthController extends StateNotifier<AuthState> {
       billingAddress: billingAddress,
       billingCep: billingCep,
     );
-    await _saveProfile(updated);
+    final remoteError = await _saveProfile(updated);
+    if (remoteError == null) {
+      state = state.copyWith(
+        user: updated,
+        successMessage: 'Perfil atualizado no banco de dados!',
+        errorMessage: null,
+      );
+      return true;
+    }
     state = state.copyWith(
       user: updated,
-      successMessage: 'Perfil atualizado no banco de dados!',
+      errorMessage:
+          'Salvo no aparelho, mas o servidor recusou: $remoteError',
+      successMessage: null,
     );
+    return false;
   }
 
   // ─── LOGOUT ───────────────────────────────────────────────────────────────

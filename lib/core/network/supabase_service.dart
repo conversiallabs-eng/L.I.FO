@@ -113,29 +113,39 @@ class SupabaseService {
   // ─── PERFIL DE USUÁRIO ────────────────────────────────────────────────────
 
   /// Salva ou atualiza o perfil do usuário na tabela `user_profiles` do Supabase.
-  /// ATENÇÃO: envia SOMENTE colunas que existem na tabela (sem fcm_token).
-  Future<bool> upsertUserProfile(UserProfile profile) async {
-    if (!_isInitialized || currentUser == null) return false;
+  /// Retorna null em caso de sucesso ou a mensagem de erro real (RLS, coluna
+  /// inexistente, etc.) — o chamador decide o que mostrar ao usuário.
+  /// Usa onConflict=auth_uid (único por login) p/ edição nunca virar INSERT
+  /// duplicado nem esbarrar em UPDATE sem policy.
+  Future<String?> upsertUserProfile(UserProfile profile) async {
+    if (!_isInitialized || currentUser == null) {
+      return 'Sem conexão com o servidor.';
+    }
     try {
-      await _client.from('user_profiles').upsert({
-        'id': profile.id,
-        'auth_uid': currentUser!.id,
-        'name': profile.name,
-        'email': profile.email,
-        'cpf': profile.cpf,
-        'rg': profile.rg,
-        'phone': profile.phone,
-        'billing_address': profile.billingAddress,
-        'billing_cep': profile.billingCep,
-        'vehicle_type': profile.vehicleType,
-        'avatar_url': profile.avatarUrl,
-        'plan': profile.plan,
-        'expires_at': profile.expiresAt.toIso8601String(),
-        'updated_at': DateTime.now().toIso8601String(),
-      });
-      return true;
-    } catch (_) {
-      return false;
+      await _client.from('user_profiles').upsert(
+        {
+          'id': profile.id,
+          'auth_uid': currentUser!.id,
+          'name': profile.name,
+          'email': profile.email,
+          'cpf': profile.cpf,
+          'rg': profile.rg,
+          'phone': profile.phone,
+          'billing_address': profile.billingAddress,
+          'billing_cep': profile.billingCep,
+          'vehicle_type': profile.vehicleType,
+          'avatar_url': profile.avatarUrl,
+          'plan': profile.plan,
+          'expires_at': profile.expiresAt.toIso8601String(),
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+        onConflict: 'auth_uid',
+      );
+      return null;
+    } on PostgrestException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString().replaceFirst('Exception: ', '');
     }
   }
 
