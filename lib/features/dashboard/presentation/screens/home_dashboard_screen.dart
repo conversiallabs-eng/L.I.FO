@@ -1134,12 +1134,13 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   }
 
   Future<void> _openImport() async {
-    final imported = await ImportManifestSheet.show(
+    // Retorna os metros do trajeto ORIGINAL (ordem do arquivo) p/ o comparativo.
+    final originalMeters = await ImportManifestSheet.show(
       context,
       startLat: _currentLocation?.latitude,
       startLng: _currentLocation?.longitude,
     );
-    if (imported == true && mounted) {
+    if (originalMeters != null && mounted) {
       _fitToCurrentManifest();
 
       // ── Pede o nome da rota ─────────────────────────────────────────────
@@ -1245,13 +1246,18 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       final s = ref.read(manifestControllerProvider);
       final v = s.currentVersion;
       if (v != null && mounted) {
-        await ImportSuccessDialog.show(
+        final viewOnMap = await ImportSuccessDialog.show(
           context,
           version: v,
           totalDurationSeconds: s.totalDurationSeconds,
           routeComputedAt: s.routeComputedAt,
           totalDistanceMeters: s.totalDistanceMeters,
+          originalDistanceMeters: originalMeters,
         );
+        // "Ver no mapa" reenquadra a rota com a animação de câmera.
+        if (viewOnMap == true && mounted) {
+          _fitToCurrentManifest();
+        }
       }
     }
   }

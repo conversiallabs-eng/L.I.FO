@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -31,12 +32,15 @@ class ImportManifestSheet extends ConsumerStatefulWidget {
 
   const ImportManifestSheet({super.key, this.startLat, this.startLng});
 
-  static Future<bool?> show(
+  /// Retorna os metros do trajeto ORIGINAL (ordem do arquivo, a partir do
+  /// GPS) quando a importação conclui — null se cancelada ou com falha.
+  /// O chamador usa para o comparativo "você economizou X km".
+  static Future<double?> show(
     BuildContext context, {
     double? startLat,
     double? startLng,
   }) {
-    return showModalBottomSheet<bool>(
+    return showModalBottomSheet<double>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Theme.of(context).colorScheme.surface,
@@ -310,6 +314,10 @@ class _ImportManifestSheetState extends ConsumerState<ImportManifestSheet> {
     }
     if (cleanFormatName.isEmpty) cleanFormatName = 'Manifesto';
 
+    // Km do trajeto ORIGINAL: ordem do arquivo, partindo do mesmo GPS.
+    // É a base honesta do comparativo "economizou X km com o LIFO".
+    final originalMeters = _originalPathMeters(resolved, startLat, startLng);
+
     final ok = await ref.read(manifestControllerProvider.notifier).importManifest(
           formatName: cleanFormatName,
           stops: resolved,
@@ -337,7 +345,7 @@ class _ImportManifestSheetState extends ConsumerState<ImportManifestSheet> {
           ),
         );
       }
-      Navigator.of(context).pop(true);
+      Navigator.of(context).pop(originalMeters);
     } else {
       setState(() => _confirming = false);
       final msg = ref.read(manifestControllerProvider).errorMessage;
@@ -345,6 +353,30 @@ class _ImportManifestSheetState extends ConsumerState<ImportManifestSheet> {
         SnackBar(content: Text(msg ?? 'Falha ao importar manifesto.')),
       );
     }
+  }
+
+  /// Soma Haversine na ordem de chegada do arquivo (ponto de partida = GPS).
+  static double _originalPathMeters(
+    List<ResolvedImportStop> stops,
+    double? startLat,
+    double? startLng,
+  ) {
+    if (stops.isEmpty) return 0;
+    double total = 0;
+    double prevLat = startLat ?? stops.first.latitude;
+    double prevLng = startLng ?? stops.first.longitude;
+    final start = (startLat != null && startLng != null) ? 0 : 1;
+    for (int i = start; i < stops.length; i++) {
+      total += LifoCalculator.calculateDistanceMeters(
+        prevLat,
+        prevLng,
+        stops[i].latitude,
+        stops[i].longitude,
+      );
+      prevLat = stops[i].latitude;
+      prevLng = stops[i].longitude;
+    }
+    return total;
   }
 
   @override
@@ -403,7 +435,27 @@ class _ImportManifestSheetState extends ConsumerState<ImportManifestSheet> {
             ),
             const Divider(height: 1),
             Flexible(
-              child: _stops.isEmpty ? _buildFileStep(subColor) : _buildPreviewStep(subColor, isDark),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 320),
+                switchInCurve: Curves.easeOutCubic,
+                switchOutCurve: Curves.easeInCubic,
+                transitionBuilder: (child, animation) => FadeTransition(
+                  opacity: animation,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, 0.06),
+                      end: Offset.zero,
+                    ).animate(animation),
+                    child: child,
+                  ),
+                ),
+                child: KeyedSubtree(
+                  key: ValueKey(_stops.isEmpty ? 'file' : 'preview'),
+                  child: _stops.isEmpty
+                      ? _buildFileStep(subColor)
+                      : _buildPreviewStep(subColor, isDark),
+                ),
+              ),
             ),
           ],
         ),
@@ -527,7 +579,10 @@ class _ImportManifestSheetState extends ConsumerState<ImportManifestSheet> {
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               itemCount: _stops.length,
               separatorBuilder: (_, _) => const SizedBox(height: 8),
-              itemBuilder: (context, i) => _buildStopRow(i, subColor, isDark),
+              itemBuilder: (context, i) => _FadeSlideIn(
+                delayMs: (i * 35).clamp(0, 500),
+                child: _buildStopRow(i, subColor, isDark),
+              ),
             ),
           ),
         ],
@@ -601,12 +656,19 @@ class _ImportManifestSheetState extends ConsumerState<ImportManifestSheet> {
             ),
           ),
           const SizedBox(height: 16),
-          Text(
-            _confirming
-                ? (_confirmStatusText ?? 'Otimizando sua rota viária...')
-                : 'Localizando endereços ($current/$total)...',
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
-            textAlign: TextAlign.center,
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 250),
+            switchInCurve: Curves.easeOutCubic,
+            child: Text(
+              _confirming
+                  ? (_confirmStatusText ?? 'Otimizando sua rota viária...')
+                  : 'Localizando endereços ($current/$total)...',
+              key: ValueKey(_confirming
+                  ? (_confirmStatusText ?? 'opt')
+                  : 'loc-$current'),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+              textAlign: TextAlign.center,
+            ),
           ),
           const SizedBox(height: 6),
           if (_lastFound != null && !_confirming)
@@ -711,6 +773,52 @@ class _ImportManifestSheetState extends ConsumerState<ImportManifestSheet> {
             onPressed: _locating ? null : () => setState(() => _stops.removeAt(index)),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Entrada escalonada de cada linha da lista (fade + subida leve).
+/// Disparo único com atraso por índice — barato mesmo com 100+ pedidos.
+class _FadeSlideIn extends StatefulWidget {
+  final int delayMs;
+  final Widget child;
+
+  const _FadeSlideIn({required this.delayMs, required this.child});
+
+  @override
+  State<_FadeSlideIn> createState() => _FadeSlideInState();
+}
+
+class _FadeSlideInState extends State<_FadeSlideIn> {
+  Timer? _timer;
+  bool _shown = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(Duration(milliseconds: widget.delayMs), () {
+      if (mounted) setState(() => _shown = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      opacity: _shown ? 1.0 : 0.0,
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
+      child: AnimatedSlide(
+        offset: _shown ? Offset.zero : const Offset(0, 0.18),
+        duration: const Duration(milliseconds: 280),
+        curve: Curves.easeOutCubic,
+        child: widget.child,
       ),
     );
   }
