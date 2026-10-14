@@ -5,6 +5,20 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+function asaasErrorText(body: any, fallback: string): string {
+  try {
+    if (body?.errors && Array.isArray(body.errors) && body.errors.length > 0) {
+      const parts = body.errors
+        .map((e: any) => e?.description || e?.code || JSON.stringify(e))
+        .filter(Boolean);
+      if (parts.length > 0) return parts.join(" | ");
+    }
+    if (body?.error) return String(body.error);
+    if (typeof body === "string" && body.trim()) return body.substring(0, 300);
+  } catch (_) { /* ignora */ }
+  return fallback;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -16,24 +30,32 @@ serve(async (req) => {
       throw new Error("ASAAS_API_KEY environment variable not set on Supabase.");
     }
 
-    const { user_id, customer_name, customer_email, customer_cpf, value, description } = await req.json();
+    const { user_id, customer_name, customer_email, customer_cpf, customer_phone, value, description } = await req.json();
 
-    // Asaas prod valida CPF/CNPJ: envia só dígitos
+    // ── Validação espelho do app (mensagem clara antes do Asaas) ──
     const cpfDigits = String(customer_cpf ?? "").replace(/\D/g, "");
     if (cpfDigits.length !== 11 && cpfDigits.length !== 14) {
       throw new Error("CPF/CNPJ inválido. Atualize o cadastro antes de gerar o PIX.");
     }
+    const email = String(customer_email ?? "").trim().toLowerCase();
+    if (!email.includes("@") || !email.includes(".")) {
+      throw new Error(`E-mail inválido no cadastro ("${customer_email ?? ""}"). Atualize em Minha Conta.`);
+    }
+    const name = String(customer_name ?? "").trim();
+    if (name.length < 3) {
+      throw new Error("Nome incompleto no cadastro. Atualize em Minha Conta.");
+    }
+
+    // Base URL configurável: ASAAS_BASE_URL (ex. sandbox https://sandbox.asaas.com/api/v3).
+    // Padrão: produção https://api.asaas.com/v3
+    const directBaseUrl = Deno.env.get("ASAAS_BASE_URL") ?? "https://api.asaas.com/v3";
 
     // Proxy de IP fixo (Hostinger 46.202.182.73) — contorna whitelist do Asaas.
-    // Se ASAAS_PROXY_URL estiver setada, todo tráfego sai pelo IP fixo.
-    // Ex: ASAAS_PROXY_URL=https://seudominio.com/asaas-proxy.php
     const proxyUrl = Deno.env.get("ASAAS_PROXY_URL");
     const proxySecret = Deno.env.get("ASAAS_PROXY_SECRET") ?? "";
-    const directBaseUrl = "https://api.asaas.com/v3";
 
     async function asaasFetch(path: string, init: RequestInit = {}): Promise<Response> {
       if (proxyUrl) {
-        // Via proxy: usa access-token (com traco) porque CDN/nginx derruba header com underscore
         const headers = {
           "Content-Type": "application/json",
           "access-token": asaasKey,
@@ -55,29 +77,59 @@ serve(async (req) => {
       return await fetch(`${directBaseUrl}${path}`, { ...init, headers });
     }
 
-    // 1. Busca ou cria o cliente no Asaas
+    // 1. Busca cliente por e-mail; se não achar, busca por CPF/CNPJ.
+    // (Asaas exige cpfCnpj único: criar direto com CPF repetido dá 400.)
     let customerId = "";
-    const searchRes = await asaasFetch(`/customers?email=${encodeURIComponent(customer_email)}`);
-    if (!searchRes.ok) {
-      const t = await searchRes.text();
-      throw new Error(`Erro ao buscar cliente no Asaas (${searchRes.status}): ${t.substring(0, 200)}`);
+    const searchEmailRes = await asaasFetch(`/customers?email=${encodeURIComponent(email)}`);
+    if (!searchEmailRes.ok) {
+      const t = await searchEmailRes.text();
+      throw new Error(`Erro ao buscar cliente no Asaas (${searchEmailRes.status}): ${t.substring(0, 200)}`);
     }
-    const searchData = await searchRes.json();
+    const searchEmailData = await searchEmailRes.json();
 
-    if (searchData.data && searchData.data.length > 0) {
-      customerId = searchData.data[0].id;
+    if (searchEmailData.data && searchEmailData.data.length > 0) {
+      customerId = searchEmailData.data[0].id;
+      // Atualiza nome/CPF/telefone do cliente existente p/ não cobrar com dado velho.
+      try {
+        await asaasFetch(`/customers/${customerId}`, {
+          method: "POST",
+          body: JSON.stringify({
+            name,
+            email,
+            cpfCnpj: cpfDigits,
+            ...(customer_phone ? { mobilePhone: String(customer_phone).replace(/\D/g, "") } : {}),
+          }),
+        });
+      } catch (_) { /* atualização é best-effort */ }
     } else {
+      const searchCpfRes = await asaasFetch(`/customers?cpfCnpj=${encodeURIComponent(cpfDigits)}`);
+      if (searchCpfRes.ok) {
+        const searchCpfData = await searchCpfRes.json();
+        if (searchCpfData.data && searchCpfData.data.length > 0) {
+          customerId = searchCpfData.data[0].id;
+          try {
+            await asaasFetch(`/customers/${customerId}`, {
+              method: "POST",
+              body: JSON.stringify({ name, email }),
+            });
+          } catch (_) { /* best-effort */ }
+        }
+      }
+    }
+
+    if (!customerId) {
       const createCusRes = await asaasFetch(`/customers`, {
         method: "POST",
         body: JSON.stringify({
-          name: customer_name || "Cliente LIFO",
-          email: customer_email,
+          name,
+          email,
           cpfCnpj: cpfDigits,
+          ...(customer_phone ? { mobilePhone: String(customer_phone).replace(/\D/g, "") } : {}),
         }),
       });
-      const createCusData = await createCusRes.json();
+      const createCusData = await createCusRes.json().catch(async () => ({ raw: await createCusRes.text() }));
       if (!createCusData.id) {
-        throw new Error(createCusData.errors?.[0]?.description || createCusData.error || "Erro ao criar cliente no Asaas.");
+        throw new Error(`Asaas recusou o cliente: ${asaasErrorText(createCusData, `HTTP ${createCusRes.status}`)}`);
       }
       customerId = createCusData.id;
     }
@@ -92,16 +144,22 @@ serve(async (req) => {
         value: value || 19.90,
         dueDate,
         description: description || "Assinatura LIFO Pro - 30 Dias",
+        ...(user_id ? { externalReference: String(user_id) } : {}),
       }),
     });
-    const payData = await payRes.json();
+    const payData = await payRes.json().catch(async () => ({ raw: await payRes.text() }));
     if (!payData.id) {
-      throw new Error(payData.errors?.[0]?.description || payData.error || "Erro ao criar cobrança PIX no Asaas.");
+      throw new Error(`Asaas recusou a cobrança: ${asaasErrorText(payData, `HTTP ${payRes.status}`)}`);
     }
 
     // 3. Busca o QR Code e Copia e Cola do PIX
     const pixRes = await asaasFetch(`/payments/${payData.id}/pixQrCode`);
-    const pixData = await pixRes.json();
+    const pixData = await pixRes.json().catch(async () => ({ raw: await pixRes.text() }));
+    if (!pixData.payload) {
+      throw new Error(
+        `Cobrança ${payData.id} criada, mas o QR do PIX falhou: ${asaasErrorText(pixData, `HTTP ${pixRes.status}`)}. Tente "Já paguei / Confirmar" em instantes ou gere de novo.`,
+      );
+    }
 
     const responsePayload = {
       payment_id: payData.id,

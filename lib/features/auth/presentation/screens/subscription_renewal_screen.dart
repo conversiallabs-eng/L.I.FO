@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../controllers/auth_controller.dart';
 import '../../data/services/asaas_payment_service.dart';
+import 'my_account_screen.dart';
 
 class SubscriptionRenewalScreen extends ConsumerStatefulWidget {
   const SubscriptionRenewalScreen({super.key});
@@ -78,6 +79,7 @@ class _SubscriptionRenewalScreenState
           _isLoadingPix = false;
         });
         final msg = e.toString().replaceFirst('Exception: ', '');
+        final isCpfError = msg.toLowerCase().contains('cpf');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Row(
@@ -98,11 +100,25 @@ class _SubscriptionRenewalScreenState
             behavior: SnackBarBehavior.floating,
             shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(10)),
-            duration: const Duration(seconds: 5),
+            duration: const Duration(seconds: 6),
+            action: isCpfError
+                ? SnackBarAction(
+                    label: 'CORRIGIR',
+                    textColor: Colors.white,
+                    onPressed: () => MyAccountScreen.open(context),
+                  )
+                : null,
           ),
         );
       }
     }
+  }
+
+  String _maskCpf(String? cpf) {
+    final d = (cpf ?? '').replaceAll(RegExp(r'\D'), '');
+    if (d.isEmpty) return 'não cadastrado';
+    if (d.length != 11) return '*** (incompleto)';
+    return '***.***.${d.substring(6, 9)}-${d.substring(9)}';
   }
 
   void _copyPixCode(String code) {
@@ -460,6 +476,85 @@ class _SubscriptionRenewalScreenState
                       ),
                     ],
                   ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // ── DADOS DA COBRANÇA (puxados do Supabase) ──────────────────────
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: cardBg,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: borderColor),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.verified_user_outlined,
+                          size: 18, color: Color(0xFF2563EB)),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Dados da cobrança',
+                        style: TextStyle(
+                          color: titleColor,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const Spacer(),
+                      GestureDetector(
+                        onTap: () => MyAccountScreen.open(context),
+                        child: const Text(
+                          'Corrigir',
+                          style: TextStyle(
+                            color: Color(0xFF2563EB),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Puxados do Supabase no login e reconferidos na hora do PIX.',
+                    style: TextStyle(color: subColor, fontSize: 11),
+                  ),
+                  const SizedBox(height: 10),
+                  _billingLine(Icons.person_outline, 'Nome', user.name.isEmpty ? '—' : user.name, titleColor, subColor),
+                  const SizedBox(height: 6),
+                  _billingLine(Icons.email_outlined, 'E-mail', user.email.isEmpty ? '—' : user.email, titleColor, subColor),
+                  const SizedBox(height: 6),
+                  _billingLine(Icons.badge_outlined, 'CPF', _maskCpf(user.cpf), titleColor, subColor),
+                  if ((user.phone ?? '').isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    _billingLine(Icons.phone_outlined, 'Fone', user.phone!, titleColor, subColor),
+                  ],
+                  if ((user.cpf ?? '').replaceAll(RegExp(r'\D'), '').isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.warning_amber_rounded,
+                              size: 16, color: Color(0xFFD97706)),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'Sem CPF o Asaas recusa (400). Toque em Corrigir e cadastre.',
+                              style: TextStyle(
+                                color: subColor,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -834,6 +929,28 @@ class _SubscriptionRenewalScreenState
           ],
         ),
       ),
+    );
+  }
+
+  Widget _billingLine(
+    IconData icon, String label, String value, Color titleColor, Color subColor) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: const Color(0xFF2563EB)),
+        const SizedBox(width: 8),
+        Text(
+          '$label: ',
+          style: TextStyle(color: subColor, fontSize: 12, fontWeight: FontWeight.w600),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(color: titleColor, fontSize: 12, fontWeight: FontWeight.w700),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ],
     );
   }
 
