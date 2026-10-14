@@ -1143,15 +1143,17 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     if (baseline != null && mounted) {
       _fitToCurrentManifest();
 
-      // ── Pede o nome da rota (entrada animada) ───────────────────────────
+      // ── Pede o nome da rota ─────────────────────────────────────────────
+      // Respiro p/ a sheet terminar de sair antes do dialog entrar (sem corte).
+      await Future.delayed(const Duration(milliseconds: 300));
+      if (!mounted) return;
       final isDark = Theme.of(context).brightness == Brightness.dark;
-      final nameCtrl = TextEditingController();
       final routeName = await showGeneralDialog<String>(
         context: context,
         barrierDismissible: false,
         barrierLabel: 'Dar nome à rota',
         barrierColor: Colors.black54,
-        transitionDuration: const Duration(milliseconds: 320),
+        transitionDuration: const Duration(milliseconds: 340),
         transitionBuilder: (dialogCtx, animation, secondaryAnim, child) {
           final curved = CurvedAnimation(
             parent: animation,
@@ -1160,10 +1162,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
           return FadeTransition(
             opacity: curved,
             child: ScaleTransition(
-              scale: Tween<double>(begin: 0.92, end: 1.0).animate(curved),
+              scale: Tween<double>(begin: 0.9, end: 1.0).animate(curved),
               child: SlideTransition(
                 position: Tween<Offset>(
-                  begin: const Offset(0, 0.06),
+                  begin: const Offset(0, 0.08),
                   end: Offset.zero,
                 ).animate(curved),
                 child: child,
@@ -1171,92 +1173,8 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
             ),
           );
         },
-        pageBuilder: (ctx, anim, secondaryAnim) => AlertDialog(
-          backgroundColor: isDark ? const Color(0xFF1E293B) : Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text(
-            'Dar nome à rota',
-            style: TextStyle(
-              color: isDark ? Colors.white : const Color(0xFF0F172A),
-              fontSize: 17,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Como você quer chamar esta rota?',
-                style: TextStyle(
-                  color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
-                  fontSize: 13,
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: nameCtrl,
-                autofocus: true,
-                textCapitalization: TextCapitalization.words,
-                style: TextStyle(
-                  color: isDark ? Colors.white : const Color(0xFF0F172A),
-                  fontSize: 15,
-                ),
-                decoration: InputDecoration(
-                  hintText: 'Ex: Rota Centro — Manhã',
-                  hintStyle: TextStyle(
-                    color: isDark ? const Color(0xFF475569) : const Color(0xFF94A3B8),
-                    fontSize: 14,
-                  ),
-                  filled: true,
-                  fillColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(
-                      color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
-                    ),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide(
-                      color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
-                    ),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: const BorderSide(color: Color(0xFF2563EB), width: 1.5),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, null),
-              child: Text(
-                'Pular',
-                style: TextStyle(
-                  color: isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8),
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                final name = nameCtrl.text.trim();
-                Navigator.pop(ctx, name.isNotEmpty ? name : null);
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF2563EB),
-                foregroundColor: Colors.white,
-                elevation: 0,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              child: const Text('Confirmar', style: TextStyle(fontWeight: FontWeight.w600)),
-            ),
-          ],
-        ),
+        pageBuilder: (ctx, anim, secondaryAnim) =>
+            _RouteNameDialog(isDark: isDark),
       );
 
       if (routeName != null && mounted) {
@@ -4913,4 +4831,224 @@ class _RouteGroupData {
   final List<ManifestVersion> versions;
 
   const _RouteGroupData({required this.root, required this.versions});
+}
+
+/// Dialog "Dar nome à rota" com entrada em cascata (selo → título → campo
+/// → botões) e teclado subindo DEPOIS da animação — sem o tranco de tudo
+/// aparecer junto. Enter do teclado confirma.
+class _RouteNameDialog extends StatefulWidget {
+  final bool isDark;
+
+  const _RouteNameDialog({required this.isDark});
+
+  @override
+  State<_RouteNameDialog> createState() => _RouteNameDialogState();
+}
+
+class _RouteNameDialogState extends State<_RouteNameDialog>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _enter;
+  late final TextEditingController _nameCtrl;
+  late final FocusNode _focus;
+
+  late final Animation<double> _opSeal;
+  late final Animation<double> _opTitle;
+  late final Animation<double> _opField;
+  late final Animation<Offset> _slideField;
+  late final Animation<double> _opButtons;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl = TextEditingController();
+    _focus = FocusNode();
+    _enter = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 750),
+    );
+    _opSeal = _fade(0.0, 0.30);
+    _opTitle = _fade(0.12, 0.45);
+    _opField = _fade(0.30, 0.65);
+    _slideField = Tween<Offset>(
+      begin: const Offset(0, 0.20),
+      end: Offset.zero,
+    ).animate(
+      CurvedAnimation(
+        parent: _enter,
+        curve: const Interval(0.30, 0.65, curve: Curves.easeOutCubic),
+      ),
+    );
+    _opButtons = _fade(0.55, 0.90);
+    _enter.forward();
+    // Teclado só depois da entrada — dialog e teclado juntos é o tranco.
+    Future.delayed(const Duration(milliseconds: 480), () {
+      if (mounted) _focus.requestFocus();
+    });
+  }
+
+  Animation<double> _fade(double begin, double end) =>
+      Tween<double>(begin: 0, end: 1).animate(
+        CurvedAnimation(
+          parent: _enter,
+          curve: Interval(begin, end, curve: Curves.easeOutCubic),
+        ),
+      );
+
+  @override
+  void dispose() {
+    _enter.dispose();
+    _nameCtrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _confirm() {
+    final name = _nameCtrl.text.trim();
+    Navigator.pop(context, name.isNotEmpty ? name : null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = widget.isDark;
+    final titleColor = isDark ? Colors.white : const Color(0xFF0F172A);
+    final subColor =
+        isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    final borderColor =
+        isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
+
+    return AlertDialog(
+      backgroundColor: isDark ? const Color(0xFF1E293B) : Colors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: FadeTransition(
+        opacity: _opTitle,
+        child: Row(
+          children: [
+            FadeTransition(
+              opacity: _opSeal,
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF2563EB).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.drive_file_rename_outline_rounded,
+                  color: Color(0xFF2563EB),
+                  size: 21,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Dar nome à rota',
+                style: TextStyle(
+                  color: titleColor,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          FadeTransition(
+            opacity: _opTitle,
+            child: Text(
+              'Como você quer chamar esta rota?',
+              style: TextStyle(color: subColor, fontSize: 13),
+            ),
+          ),
+          const SizedBox(height: 12),
+          FadeTransition(
+            opacity: _opField,
+            child: SlideTransition(
+              position: _slideField,
+              child: TextField(
+                controller: _nameCtrl,
+                focusNode: _focus,
+                textCapitalization: TextCapitalization.words,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _confirm(),
+                style: TextStyle(color: titleColor, fontSize: 15),
+                decoration: InputDecoration(
+                  hintText: 'Ex: Rota Centro — Manhã',
+                  hintStyle: TextStyle(color: subColor, fontSize: 14),
+                  filled: true,
+                  fillColor: isDark
+                      ? const Color(0xFF0F172A)
+                      : const Color(0xFFF8FAFC),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: borderColor),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(color: borderColor),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: const BorderSide(
+                      color: Color(0xFF2563EB),
+                      width: 1.5,
+                    ),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 13,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        FadeTransition(
+          opacity: _opButtons,
+          child: Row(
+            children: [
+              Expanded(
+                child: TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(
+                    'Pular',
+                    style: TextStyle(
+                      color: subColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 2,
+                child: ElevatedButton(
+                  onPressed: _confirm,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF2563EB),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    'Confirmar',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }
