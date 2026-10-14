@@ -41,8 +41,6 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
   late final Animation<double> _scaleQr;
   late final Animation<double> _opRest;
 
-  late final AnimationController _scan; // linha de scan em loop
-  late final AnimationController _pulse; // anel pulsante do status
   late final AnimationController _success; // pop do check
 
   Timer? _pollTimer;
@@ -75,16 +73,6 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
       CurvedAnimation(parent: _enter, curve: const Interval(0.55, 1.0, curve: Curves.easeOutCubic)),
     );
     _enter.forward();
-
-    _scan = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2400),
-    )..repeat(reverse: true);
-
-    _pulse = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1800),
-    )..repeat();
 
     _success = AnimationController(
       vsync: this,
@@ -128,8 +116,6 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
     HapticFeedback.heavyImpact();
     _pollTimer?.cancel();
     _clockTimer?.cancel();
-    _scan.stop();
-    _pulse.stop();
     _success.forward(from: 0);
 
     // O webhook já ativou no servidor; espelha no app.
@@ -174,8 +160,6 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
     _pollTimer?.cancel();
     _clockTimer?.cancel();
     _enter.dispose();
-    _scan.dispose();
-    _pulse.dispose();
     _success.dispose();
     super.dispose();
   }
@@ -325,35 +309,6 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
                               );
                             },
                           ),
-                          // Linha de scan passeando (só enquanto aguarda)
-                          if (!expired)
-                            AnimatedBuilder(
-                              animation: _scan,
-                              builder: (_, child) => Positioned(
-                                top: 12 + _scan.value * 196,
-                                left: 16,
-                                right: 16,
-                                child: Container(
-                                  height: 3,
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(2),
-                                    gradient: const LinearGradient(
-                                      colors: [
-                                        Colors.transparent,
-                                        Color(0xFF10B981),
-                                        Colors.transparent,
-                                      ],
-                                    ),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: const Color(0xFF10B981).withValues(alpha: 0.7),
-                                        blurRadius: 12,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
                         ],
                       ),
                     ),
@@ -369,25 +324,21 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          AnimatedBuilder(
-                            animation: _pulse,
-                            builder: (_, child) => Container(
-                              width: 9,
-                              height: 9,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: (expired
-                                        ? const Color(0xFFDC2626)
-                                        : const Color(0xFF059669))
-                                    .withValues(alpha: 0.45 + 0.55 * (0.5 + 0.5 * _pulse.value)),
-                              ),
+                          Container(
+                            width: 9,
+                            height: 9,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: expired
+                                  ? const Color(0xFFDC2626)
+                                  : const Color(0xFF059669),
                             ),
                           ),
                           const SizedBox(width: 8),
                           Text(
                             expired
                                 ? 'PIX expirado — gere um novo'
-                                : 'Aguardando pagamento${'.' * (1 + (_pulse.value * 2.99).floor())}',
+                                : 'Aguardando pagamento…',
                             style: TextStyle(
                               color: expired
                                   ? const Color(0xFFDC2626)
