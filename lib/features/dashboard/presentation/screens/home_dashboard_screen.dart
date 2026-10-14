@@ -31,6 +31,8 @@ import '../../../auth/presentation/screens/my_account_screen.dart';
 import '../../../auth/presentation/screens/subscription_renewal_screen.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
 import '../../../auth/presentation/widgets/google_sign_in_button.dart';
+import '../../../onboarding/data/tutorial_prefs.dart';
+import '../../../onboarding/presentation/screens/app_tutorial_screen.dart';
 
 class HomeDashboardScreen extends ConsumerStatefulWidget {
   const HomeDashboardScreen({super.key});
@@ -315,6 +317,12 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     );
     _mapController = MapController();
     _fetchCurrentLocation();
+    // Tutorial de primeiro login: 1x, com o mapa já assentado.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 900), () {
+        if (mounted) AppTutorial.maybeShow(context);
+      });
+    });
   }
 
   /// Animação de transição de câmera suave para posição, zoom e rotação.
@@ -3882,6 +3890,13 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
           style: TextStyle(fontSize: 13, height: 1.4),
         ),
         actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dCtx);
+              AppTutorialScreen.open(ctx);
+            },
+            child: const Text('Ver tutorial', style: TextStyle(color: Color(0xFF2563EB), fontWeight: FontWeight.w700)),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(dCtx),
             child: const Text('Entendi', style: TextStyle(color: Color(0xFF2563EB), fontWeight: FontWeight.w700)),
