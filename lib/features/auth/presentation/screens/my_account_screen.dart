@@ -409,7 +409,7 @@ class MyAccountScreen extends ConsumerWidget {
                   _buildProfileRow(
                     icon: Icons.credit_card_outlined,
                     label: 'Plano Ativo',
-                    value: 'LIFO Pro (R\$ 19,90 / mês)',
+                    value: 'LIFO Pro • ${user.plan}',
                     titleColor: titleColor,
                     subColor: subColor,
                   ),

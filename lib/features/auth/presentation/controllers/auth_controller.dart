@@ -296,15 +296,19 @@ class AuthController extends StateNotifier<AuthState> {
 
   // ─── RENOVAR ASSINATURA ──────────────────────────────────────────────────
 
-  Future<void> renewSubscription() async {
+  /// Renova a assinatura por [days] (30 mensal · 365 anual).
+  Future<void> renewSubscription({
+    int days = 30,
+    String plan = 'Standard (Ativo)',
+  }) async {
     HapticFeedback.selectionClick();
     final newExpiry = state.user.expiresAt.isAfter(DateTime.now())
-        ? state.user.expiresAt.add(const Duration(days: 30))
-        : DateTime.now().add(const Duration(days: 30));
+        ? state.user.expiresAt.add(Duration(days: days))
+        : DateTime.now().add(Duration(days: days));
 
     final updated = state.user.copyWith(
       expiresAt: newExpiry,
-      plan: 'Standard (Ativo)',
+      plan: plan,
     );
 
     await _saveProfile(updated);
@@ -312,7 +316,7 @@ class AuthController extends StateNotifier<AuthState> {
     // Atualiza assinatura no Supabase
     await SupabaseService.instance.upsertSubscription(
       userId: updated.id,
-      plan: 'Standard (Ativo)',
+      plan: plan,
       expiresAt: newExpiry,
       status: 'active',
       paymentMethod: 'manual',
@@ -320,7 +324,7 @@ class AuthController extends StateNotifier<AuthState> {
 
     state = state.copyWith(
       user: updated,
-      successMessage: 'Assinatura renovada com sucesso!',
+      successMessage: 'Assinatura renovada com sucesso! +$days dias ativados.',
     );
   }
 

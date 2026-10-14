@@ -121,10 +121,17 @@ serve(async (req) => {
       .limit(1)
       .maybeSingle();
 
+    // Dias pelo valor pago: R$ 200+ = anual (365d), senão mensal (30d).
+    const paidValue = Number(payment?.value ?? 0);
+    const days = paidValue >= 199 ? 365 : 30;
+
     const base = current?.expires_at
       ? Math.max(new Date(current.expires_at as string).getTime(), Date.now())
       : Date.now();
-    const newExpiry = new Date(base + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const newExpiry = new Date(base + days * 24 * 60 * 60 * 1000).toISOString();
+
+    const priceCents = Math.round(paidValue * 100);
+    const planLabel = days >= 365 ? "Standard Anual (Ativo)" : "Standard (Ativo)";
 
     // Update-or-insert (sem depender de UNIQUE em user_id).
     if (current?.id) {
@@ -133,7 +140,7 @@ serve(async (req) => {
         .update({
           plan_type: "pix_manual",
           status: "active",
-          price_cents: 1990,
+          price_cents: priceCents,
           starts_at: new Date().toISOString(),
           expires_at: newExpiry,
           updated_at: new Date().toISOString(),
@@ -145,7 +152,7 @@ serve(async (req) => {
         user_id: authUid,
         plan_type: "pix_manual",
         status: "active",
-        price_cents: 1990,
+        price_cents: priceCents,
         starts_at: new Date().toISOString(),
         expires_at: newExpiry,
         updated_at: new Date().toISOString(),
@@ -156,7 +163,7 @@ serve(async (req) => {
     await admin
       .from("user_profiles")
       .update({
-        plan: "Standard (Ativo)",
+        plan: planLabel,
         expires_at: newExpiry,
         updated_at: new Date().toISOString(),
       })

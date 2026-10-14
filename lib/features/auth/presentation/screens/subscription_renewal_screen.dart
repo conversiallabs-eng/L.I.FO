@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../controllers/auth_controller.dart';
 import '../../data/services/asaas_payment_service.dart';
+import '../../domain/models/subscription_plan.dart';
 import 'my_account_screen.dart';
 import 'pix_payment_screen.dart';
 
@@ -27,6 +28,10 @@ class _SubscriptionRenewalScreenState
     extends ConsumerState<SubscriptionRenewalScreen> {
   bool _isLoadingPix = false;
   AsaasPixChargeResponse? _pixResponse;
+  String _selectedPlanId = SubscriptionPlan.monthly.id;
+  SubscriptionPlan _lastChargedPlan = SubscriptionPlan.monthly;
+
+  SubscriptionPlan get _selectedPlan => SubscriptionPlan.byId(_selectedPlanId);
 
   String _formatExpiryDate(DateTime dt) {
     final day = dt.day.toString().padLeft(2, '0');
@@ -50,18 +55,21 @@ class _SubscriptionRenewalScreenState
 
     final user = ref.read(authControllerProvider).user;
     try {
+      final plan = _selectedPlan;
       final pix = await AsaasPaymentService.instance.createPixCharge(
         user: user,
-        amount: 19.90,
+        amount: plan.amount,
+        description: plan.description,
       );
 
       if (!mounted) return;
       setState(() {
         _pixResponse = pix;
+        _lastChargedPlan = plan;
         _isLoadingPix = false;
       });
       HapticFeedback.lightImpact();
-      final paid = await PixPaymentScreen.open(context, pix);
+      final paid = await PixPaymentScreen.open(context, pix, plan: plan);
       // Pagou lá dentro: a assinatura já foi renovada — volta sozinho.
       if (paid && mounted) Navigator.of(context).pop();
     } catch (e) {
@@ -244,7 +252,7 @@ class _SubscriptionRenewalScreenState
                   const SizedBox(height: 6),
                   Text(
                     'Sua assinatura atual é válida até ${_formatExpiryDate(user.expiresAt)}. '
-                    'Renove por mais 30 dias com liberação imediata via PIX.',
+                    'Liberação imediata via PIX.',
                     style: TextStyle(
                       color: subColor,
                       fontSize: 13,
@@ -256,7 +264,7 @@ class _SubscriptionRenewalScreenState
             ),
             const SizedBox(height: 20),
 
-            // ── CARTÃO DO PLANO SELECIONADO (CIRCUIT DESIGN) ────────────────
+            // ── PLANOS (toque para selecionar) ───────────────────────────────
             Text(
               'Escolha seu Plano',
               style: TextStyle(
@@ -267,115 +275,22 @@ class _SubscriptionRenewalScreenState
             ),
             const SizedBox(height: 10),
 
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: cardBg,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: const Color(0xFF2563EB),
-                  width: 2.0,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF2563EB).withValues(alpha: 0.08),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
+            for (final plan in SubscriptionPlan.all) ...[
+              _planCard(
+                plan: plan,
+                selected: plan.id == _selectedPlanId,
+                cardBg: cardBg,
+                titleColor: titleColor,
+                subColor: subColor,
+                onTap: () {
+                  if (_isLoadingPix) return;
+                  HapticFeedback.selectionClick();
+                  setState(() => _selectedPlanId = plan.id);
+                },
               ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 24,
-                    height: 24,
-                    decoration: const BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Color(0xFF2563EB),
-                    ),
-                    child: const Icon(
-                      Icons.check,
-                      color: Colors.white,
-                      size: 16,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Wrap(
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          spacing: 6,
-                          runSpacing: 4,
-                          children: [
-                            Text(
-                              'Plano Mensal (30 Dias)',
-                              style: TextStyle(
-                                color: titleColor,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 2,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF10B981).withValues(alpha: 0.15),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: const Text(
-                                'RECOMENDADO',
-                                style: TextStyle(
-                                  color: Color(0xFF059669),
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Pagamento via PIX • Liberação Automática',
-                          style: TextStyle(
-                            color: subColor,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        'R\$ 19,90',
-                        style: TextStyle(
-                          color: Color(0xFF2563EB),
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      Text(
-                        '/30 dias',
-                        style: TextStyle(
-                          color: subColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
+              const SizedBox(height: 10),
+            ],
+            const SizedBox(height: 6),
 
             // ── DADOS DA COBRANÇA (puxados do Supabase) ──────────────────────
             Container(
@@ -574,7 +489,7 @@ class _SubscriptionRenewalScreenState
                   label: Text(
                     _isLoadingPix
                         ? 'Gerando Cobrança PIX...'
-                        : 'Pagar R\$ 19,90 via PIX',
+                        : 'Pagar ${_selectedPlan.priceBr} via PIX',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 15,
@@ -612,7 +527,11 @@ class _SubscriptionRenewalScreenState
                     elevation: 2,
                   ),
                   onPressed: () async {
-                    final paid = await PixPaymentScreen.open(context, _pixResponse!);
+                    final paid = await PixPaymentScreen.open(
+                      context,
+                      _pixResponse!,
+                      plan: _lastChargedPlan,
+                    );
                     if (paid && context.mounted) Navigator.of(context).pop();
                   },
                 ),
@@ -634,6 +553,133 @@ class _SubscriptionRenewalScreenState
             ],
 
             const SizedBox(height: 24),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _planCard({
+    required SubscriptionPlan plan,
+    required bool selected,
+    required Color cardBg,
+    required Color titleColor,
+    required Color subColor,
+    required VoidCallback onTap,
+  }) {
+    final accent =
+        plan.id == SubscriptionPlan.annual.id ? const Color(0xFF059669) : const Color(0xFF2563EB);
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: cardBg,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: selected ? accent : const Color(0xFFE2E8F0),
+            width: selected ? 2.0 : 1.2,
+          ),
+          boxShadow: [
+            if (selected)
+              BoxShadow(
+                color: accent.withValues(alpha: 0.10),
+                blurRadius: 10,
+                offset: const Offset(0, 4),
+              ),
+          ],
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 220),
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: selected ? accent : Colors.transparent,
+                border: Border.all(
+                  color: selected ? accent : const Color(0xFF94A3B8),
+                  width: 1.6,
+                ),
+              ),
+              child: selected
+                  ? const Icon(Icons.check, color: Colors.white, size: 16)
+                  : null,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: [
+                      Text(
+                        plan.title,
+                        style: TextStyle(
+                          color: titleColor,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (plan.badge != null)
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: accent.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            plan.badge!,
+                            style: TextStyle(
+                              color: accent,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Pagamento via PIX • Liberação Automática',
+                    style: TextStyle(
+                      color: subColor,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  plan.priceBr,
+                  style: TextStyle(
+                    color: selected ? accent : titleColor,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                Text(
+                  plan.durationLabel,
+                  style: TextStyle(
+                    color: subColor,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),

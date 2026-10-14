@@ -43,12 +43,13 @@ class AsaasPaymentService {
   /// URL padrão da API do Asaas ou Supabase Edge Function para cobranças PIX
   static const String _kSupabaseEdgeFunctionUrl = 'https://sjbmweuszwxbkdimbwdg.supabase.co/functions/v1/create-asaas-pix-charge';
 
-  /// Cria uma cobrança PIX no valor de R$ 19,90 via Asaas / Supabase
+  /// Cria uma cobrança PIX via Asaas / Supabase (mensal R$ 19,90 ou anual R$ 200).
   /// Lança [Exception] com a mensagem real do Asaas em caso de falha
   /// (sem fallback falso: PIX falso faz o usuário pagar e não liberar).
   Future<AsaasPixChargeResponse> createPixCharge({
     required UserProfile user,
-    double amount = 19.90,
+    required double amount,
+    required String description,
   }) async {
     // ── Fonte da verdade: repuxa o perfil fresco do Supabase ──────────────
     // Evita cobrar com CPF/nome/e-mail velhos do cache local.
@@ -99,7 +100,7 @@ class AsaasPaymentService {
       if ((effective.phone ?? '').trim().isNotEmpty)
         'customer_phone': effective.phone!.replaceAll(RegExp(r'\D'), ''),
       'value': amount,
-      'description': 'Assinatura LIFO Pro - 30 Dias',
+      'description': description,
     };
 
     String? lastError;

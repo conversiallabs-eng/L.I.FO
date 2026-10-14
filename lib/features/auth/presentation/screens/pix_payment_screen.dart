@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../controllers/auth_controller.dart';
 import '../../data/services/asaas_payment_service.dart';
+import '../../domain/models/subscription_plan.dart';
 
 /// Takeover de pagamento PIX estilo Nubank/Mercado Pago.
 ///
@@ -13,15 +14,20 @@ import '../../data/services/asaas_payment_service.dart';
 /// toca a animação de sucesso e renova a assinatura — zero botão manual.
 class PixPaymentScreen extends ConsumerStatefulWidget {
   final AsaasPixChargeResponse pix;
+  final SubscriptionPlan plan;
 
-  const PixPaymentScreen({super.key, required this.pix});
+  const PixPaymentScreen({super.key, required this.pix, required this.plan});
 
   /// Abre em tela cheia. Retorna true se o pagamento foi aprovado.
-  static Future<bool> open(BuildContext context, AsaasPixChargeResponse pix) {
+  static Future<bool> open(
+    BuildContext context,
+    AsaasPixChargeResponse pix, {
+    required SubscriptionPlan plan,
+  }) {
     return Navigator.of(context)
         .push<bool>(
           MaterialPageRoute(
-            builder: (_) => PixPaymentScreen(pix: pix),
+            builder: (_) => PixPaymentScreen(pix: pix, plan: plan),
             fullscreenDialog: true,
           ),
         )
@@ -129,9 +135,12 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
     _clockTimer?.cancel();
     _success.forward(from: 0);
 
-    // O webhook já ativou no servidor; espelha no app.
+    // O webhook já ativou no servidor; espelha no app com os dias do plano.
     try {
-      await ref.read(authControllerProvider.notifier).renewSubscription();
+      await ref.read(authControllerProvider.notifier).renewSubscription(
+            days: widget.plan.days,
+            plan: widget.plan.planName,
+          );
     } catch (_) {}
 
     await Future.delayed(const Duration(milliseconds: 2600));
@@ -228,14 +237,14 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
                         color: const Color(0xFF059669).withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(20),
                       ),
-                      child: const Row(
+                      child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.pix, size: 14, color: Color(0xFF059669)),
-                          SizedBox(width: 5),
+                          const Icon(Icons.pix, size: 14, color: Color(0xFF059669)),
+                          const SizedBox(width: 5),
                           Text(
-                            'LIFO PRO • 30 DIAS',
-                            style: TextStyle(
+                            widget.plan.shortLabel,
+                            style: const TextStyle(
                               color: Color(0xFF059669),
                               fontSize: 11,
                               fontWeight: FontWeight.w800,
@@ -249,7 +258,7 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  'R\$ 19,90',
+                  widget.plan.priceBr,
                   style: TextStyle(
                     color: titleColor,
                     fontSize: 44,
@@ -533,17 +542,17 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
             const SizedBox(height: 22),
             FadeTransition(
               opacity: _success,
-              child: const Column(
+              child: Column(
                 children: [
-                  Text(
+                  const Text(
                     'Pagamento aprovado!',
                     style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
                   ),
-                  SizedBox(height: 8),
+                  const SizedBox(height: 8),
                   Text(
-                    'Assinatura LIFO Pro ativada • +30 dias',
+                    'Assinatura LIFO Pro ativada • +${widget.plan.days} dias',
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                   ),
                 ],
               ),
