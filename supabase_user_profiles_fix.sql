@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS public.user_profiles (
   phone           TEXT,
   billing_address TEXT,
   billing_cep     TEXT,
+  city_uf         TEXT,
   vehicle_type    TEXT,
   avatar_url      TEXT,
   plan            TEXT NOT NULL DEFAULT 'Standard (Trial 30 Dias)',
@@ -45,6 +46,7 @@ ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS rg TEXT;
 ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS phone TEXT;
 ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS billing_address TEXT;
 ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS billing_cep TEXT;
+ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS city_uf TEXT;
 ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS vehicle_type TEXT;
 ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'Standard (Trial 30 Dias)';

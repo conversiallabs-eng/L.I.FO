@@ -13,6 +13,7 @@ class UserProfile {
   final String? phone;
   final String? billingAddress;
   final String? billingCep;
+  final String? cityUf;
   final String? fcmToken;
 
   const UserProfile({
@@ -30,6 +31,7 @@ class UserProfile {
     this.phone,
     this.billingAddress,
     this.billingCep,
+    this.cityUf,
     this.fcmToken,
   });
 
@@ -53,6 +55,7 @@ class UserProfile {
     String? phone,
     String? billingAddress,
     String? billingCep,
+    String? cityUf,
     String? fcmToken,
   }) {
     return UserProfile(
@@ -70,6 +73,7 @@ class UserProfile {
       phone: phone ?? this.phone,
       billingAddress: billingAddress ?? this.billingAddress,
       billingCep: billingCep ?? this.billingCep,
+      cityUf: cityUf ?? this.cityUf,
       fcmToken: fcmToken ?? this.fcmToken,
     );
   }
@@ -89,6 +93,7 @@ class UserProfile {
     'phone': phone,
     'billingAddress': billingAddress,
     'billingCep': billingCep,
+    'cityUf': cityUf,
     'fcmToken': fcmToken,
   };
 
@@ -108,6 +113,7 @@ class UserProfile {
     phone: map['phone'] as String?,
     billingAddress: map['billingAddress'] as String?,
     billingCep: map['billingCep'] as String?,
+    cityUf: map['cityUf'] as String?,
     fcmToken: map['fcmToken'] as String?,
   );
 }

@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/services/cep_service.dart';
 import '../controllers/auth_controller.dart';
 import 'login_screen.dart';
 import 'subscription_renewal_screen.dart';
@@ -20,10 +22,13 @@ class MyAccountScreen extends ConsumerStatefulWidget {
 
 class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
   /// Ordem dos campos (navegação do teclado e salvamento).
-  static const _fieldOrder = ['name', 'cpf', 'rg', 'phone', 'address', 'cep'];
+  static const _fieldOrder = ['name', 'cpf', 'rg', 'phone', 'address', 'cep', 'cityuf'];
 
   bool _editing = false;
   bool _saving = false;
+  bool _lookingUpCep = false;
+  String _lastAutoCep = '';
+  Timer? _cepDebounce;
   late final Map<String, TextEditingController> _ctrls;
   late final Map<String, FocusNode> _focus;
 
@@ -33,6 +38,8 @@ class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
     _ctrls = {for (final k in _fieldOrder) k: TextEditingController()};
     _focus = {for (final k in _fieldOrder) k: FocusNode()};
     _syncControllers();
+    // Ao completar 8 dígitos no CEP, autocompleta endereço + cidade (BrasilAPI).
+    _ctrls['cep']!.addListener(_onCepChanged);
   }
 
   /// Traz os valores atuais do usuário p/ os campos (ao entrar em edição).
@@ -44,10 +51,55 @@ class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
     _ctrls['phone']!.text = user.phone ?? '';
     _ctrls['address']!.text = user.billingAddress ?? '';
     _ctrls['cep']!.text = user.billingCep ?? '';
+    _ctrls['cityuf']!.text = user.cityUf ?? '';
+  }
+
+  void _onCepChanged() {
+    if (!_editing || _saving) return;
+    _cepDebounce?.cancel();
+    _cepDebounce = Timer(const Duration(milliseconds: 600), () {
+      final digits = _ctrls['cep']!.text.replaceAll(RegExp(r'\D'), '');
+      if (digits.length == 8 && digits != _lastAutoCep) {
+        _lastAutoCep = digits;
+        _autofillFromCep(digits);
+      }
+    });
+  }
+
+  /// Preenche endereço e cidade/UF via BrasilAPI sem salvar sozinho.
+  Future<void> _autofillFromCep(String digits) async {
+    if (_lookingUpCep || !mounted) return;
+    setState(() => _lookingUpCep = true);
+    try {
+      final addr = await CepService.instance.fetchAddress(digits);
+      if (!mounted || !_editing || addr == null) return;
+      var filled = false;
+      if (_ctrls['address']!.text.trim().isEmpty && addr.shortAddress.isNotEmpty) {
+        _ctrls['address']!.text = addr.shortAddress;
+        filled = true;
+      }
+      if (addr.cityUf.isNotEmpty && _ctrls['cityuf']!.text.trim().isEmpty) {
+        _ctrls['cityuf']!.text = addr.cityUf;
+        filled = true;
+      }
+      if (filled && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Endereço preenchido pelo CEP. Confira e toque em Salvar.'),
+            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _lookingUpCep = false);
+    }
   }
 
   @override
   void dispose() {
+    _cepDebounce?.cancel();
+    _ctrls['cep']?.removeListener(_onCepChanged);
     for (final c in _ctrls.values) {
       c.dispose();
     }
@@ -90,6 +142,21 @@ class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
     setState(() => _saving = true);
     FocusScope.of(context).unfocus();
 
+    // Última chance do autocomplete: CEP válido + endereço/cidade vazios.
+    final cepDigits = _ctrls['cep']!.text.replaceAll(RegExp(r'\D'), '');
+    if (cepDigits.length == 8 &&
+        (_ctrls['address']!.text.trim().isEmpty || _ctrls['cityuf']!.text.trim().isEmpty)) {
+      final addr = await CepService.instance.fetchAddress(cepDigits);
+      if (addr != null) {
+        if (_ctrls['address']!.text.trim().isEmpty && addr.shortAddress.isNotEmpty) {
+          _ctrls['address']!.text = addr.shortAddress;
+        }
+        if (_ctrls['cityuf']!.text.trim().isEmpty && addr.cityUf.isNotEmpty) {
+          _ctrls['cityuf']!.text = addr.cityUf;
+        }
+      }
+    }
+
     final ok = await ref.read(authControllerProvider.notifier).updateProfile(
           name: _ctrls['name']!.text.trim(),
           cpf: _ctrls['cpf']!.text.trim(),
@@ -97,6 +164,7 @@ class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
           phone: _ctrls['phone']!.text.trim(),
           billingAddress: _ctrls['address']!.text.trim(),
           billingCep: _ctrls['cep']!.text.trim(),
+          cityUf: _ctrls['cityuf']!.text.trim(),
         );
 
     if (!mounted) return;
@@ -423,9 +491,14 @@ class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
                   _buildProfileRow(
                     icon: Icons.apartment_outlined,
                     label: 'Cidade / UF',
-                    value: 'Não informado',
+                    value: (user.cityUf == null || user.cityUf!.isEmpty)
+                        ? 'Preenchido pelo CEP ou toque na linha'
+                        : user.cityUf!,
                     titleColor: titleColor,
                     subColor: subColor,
+                    fieldKey: 'cityuf',
+                    capitalization: TextCapitalization.words,
+                    hint: 'Cidade - UF',
                   ),
                 ],
               ),
@@ -590,7 +663,7 @@ class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
                     focusNode: _focus[key]!,
                     keyboardType: keyboard,
                     textCapitalization: capitalization,
-                    textInputAction: key == 'cep'
+                    textInputAction: key == _fieldOrder.last
                         ? TextInputAction.done
                         : TextInputAction.next,
                     onSubmitted: (_) => _onFieldSubmitted(key),
@@ -621,6 +694,12 @@ class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
           ),
           if (key != null && !_editing)
             Icon(Icons.edit_outlined, size: 14, color: subColor),
+          if (key == 'cep' && _lookingUpCep && _editing)
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
           ?trailingWidget,
         ],
       ),

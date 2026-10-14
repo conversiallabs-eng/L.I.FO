@@ -133,6 +133,7 @@ class SupabaseService {
           'phone': profile.phone,
           'billing_address': profile.billingAddress,
           'billing_cep': profile.billingCep,
+          'city_uf': profile.cityUf,
           'vehicle_type': profile.vehicleType,
           'avatar_url': profile.avatarUrl,
           'plan': profile.plan,
@@ -177,6 +178,7 @@ class SupabaseService {
         phone: data['phone'] as String?,
         billingAddress: data['billing_address'] as String?,
         billingCep: data['billing_cep'] as String?,
+        cityUf: data['city_uf'] as String?,
         fcmToken: data['fcm_token'] as String?,
       );
     } catch (_) {

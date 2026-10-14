@@ -31,7 +31,7 @@ class AppDatabase {
 
     return await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _onCreate,
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -44,6 +44,12 @@ class AppDatabase {
         }
         if (oldVersion < 3) {
           await _createUserProfilesTable(db);
+        }
+        if (oldVersion < 4) {
+          // v4: coluna cidade/UF no perfil.
+          try {
+            await db.execute('ALTER TABLE user_profiles ADD COLUMN city_uf TEXT');
+          } catch (_) {}
         }
       },
     );
@@ -134,6 +140,7 @@ class AppDatabase {
         phone TEXT,
         billing_address TEXT,
         billing_cep TEXT,
+        city_uf TEXT,
         fcm_token TEXT,
         updated_at TEXT NOT NULL
       )
@@ -160,6 +167,7 @@ class AppDatabase {
         'phone': profile.phone,
         'billing_address': profile.billingAddress,
         'billing_cep': profile.billingCep,
+        'city_uf': profile.cityUf,
         'fcm_token': profile.fcmToken,
         'updated_at': DateTime.now().toIso8601String(),
       },
@@ -188,6 +196,7 @@ class AppDatabase {
       phone: r['phone'] as String?,
       billingAddress: r['billing_address'] as String?,
       billingCep: r['billing_cep'] as String?,
+      cityUf: r.containsKey('city_uf') ? r['city_uf'] as String? : null,
       fcmToken: r['fcm_token'] as String?,
     );
   }

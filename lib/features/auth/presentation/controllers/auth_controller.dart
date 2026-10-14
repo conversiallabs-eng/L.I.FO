@@ -342,6 +342,7 @@ class AuthController extends StateNotifier<AuthState> {
     String? phone,
     String? billingAddress,
     String? billingCep,
+    String? cityUf,
   }) async {
     final updated = state.user.copyWith(
       name: name,
@@ -351,6 +352,7 @@ class AuthController extends StateNotifier<AuthState> {
       phone: phone,
       billingAddress: billingAddress,
       billingCep: billingCep,
+      cityUf: cityUf,
     );
     final remoteError = await _saveProfile(updated);
     if (remoteError == null) {
