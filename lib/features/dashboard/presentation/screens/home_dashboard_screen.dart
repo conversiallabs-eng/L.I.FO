@@ -23,6 +23,7 @@ import '../../../navigation_map/presentation/widgets/logistics_map_canvas.dart';
 import '../../../../core/services/geocoding_service.dart';
 import '../../../../core/services/hybrid_routing_service.dart';
 import '../../../../core/services/notification_service.dart';
+import '../../../../core/services/voice_guidance.dart';
 import '../../../route_manifest/domain/models/manifest_version.dart';
 import '../../../auth/presentation/controllers/auth_controller.dart';
 import '../../../auth/presentation/screens/create_account_screen.dart';
@@ -272,9 +273,18 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   int _legClosestIdx = 0;           // ponto da polyline mais perto do GPS
   double _legRemainingMeters = -1;  // rua restante até a parada (-1 = sem dado)
 
-  // HUD do topo estilo Waze (exibe manobra, rua e distância real de rua)
-  bool _hudVisible = false;        // visível durante toda a navegação
-  Timer? _hudHideTimer;            // timer de auto-ocultar fora de navegação
+  // HUD do topo estilo Waze (aparece uns segundos e some; volta em
+  // manobra nova ou perto da parada — com manobra e km de rua reais)
+  bool _hudVisible = false;
+  Timer? _hudHideTimer;
+  String _lastHudManeuverKey = '';
+
+  // Voz do GPS (alto-falante da pilha lateral). Fala 1x de longe (300 m)
+  // e 1x em cima (80 m) por manobra — sem repetir a cada fix.
+  bool _voiceMuted = false;
+  String _announcedFarKey = '';
+  String _announcedNearKey = '';
+  String _announcedArriveStopId = '';
 
   @override
   void initState() {
@@ -388,20 +398,6 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         _courseUp = false;
       });
     }
-  }
-
-  /// Retoma o enquadramento suave da câmera com foco nas costas do cursor
-  void _resumeCameraFollow() {
-    _autoRecenteringTimer?.cancel();
-    if (_currentLocation == null) return;
-    setState(() {
-      _followGps = true;
-      _courseUp = true;
-    });
-    final course = _getForwardCourse();
-    final targetRotation = (360.0 - course) % 360.0;
-    final camCenter = _getNavigationCameraCenter(_currentLocation!, course);
-    _animatedMapMove(camCenter, 17.2, destRotation: targetRotation, durationMs: 800);
   }
 
   /// Garante que a rota seja automaticamente re-otimizada a partir da localização do entregador
@@ -536,8 +532,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                 ) > 35) {
               _fetchRouteToTargetStop(target);
             }
-            // Atualiza o HUD caso esteja aproximando da parada alvo
+            // HUD temporário + voz da manobra (limiares, sem repetir)
             _updateManeuverHud(next, target);
+            _maybeAnnounceManeuver(target);
           }
         }
       });
@@ -1368,6 +1365,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
           _legStepIndices = indices;
           _legClosestIdx = 0;
           _legRemainingMeters = cum.isNotEmpty ? cum.last : leg.distance;
+          _lastHudManeuverKey = '';
+          // NÃO zera os anunciados aqui: o refetch é periódico e a chave
+          // leva o id da parada — troca de parada se vira sozinha.
         });
         _showManeuverHud();
       } else {
@@ -1488,9 +1488,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     _legRemainingMeters = max(0.0, _legCumMeters.last - _legCumMeters[idx]);
   }
 
-  /// Próxima manobra à frente (>25 m): step + metros de rua até ela.
+  /// Próxima manobra à frente (>25 m): step + metros de rua até ela + índice.
   /// Null quando não há steps (offline) — o HUD usa o fallback de destino.
-  ({RouteStep step, double metersTo})? _currentManeuver() {
+  ({RouteStep step, double metersTo, int index})? _currentManeuver() {
     if (_legSteps.isEmpty ||
         _legStepIndices.length != _legSteps.length ||
         _legCumMeters.isEmpty) {
@@ -1501,11 +1501,15 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       final si = _legStepIndices[i];
       if (si < 0) continue;
       final d = _legCumMeters[si.clamp(0, _legCumMeters.length - 1)] - _legCumMeters[cur];
-      if (d > 25) return (step: _legSteps[i], metersTo: d);
+      if (d > 25) return (step: _legSteps[i], metersTo: d, index: i);
     }
     // Tudo para trás: chegando — mostra o último step (normalmente arrive).
     final remaining = _legRemainingMeters < 0 ? 0.0 : _legRemainingMeters;
-    return (step: _legSteps.last, metersTo: remaining);
+    return (
+      step: _legSteps.last,
+      metersTo: remaining,
+      index: _legSteps.length - 1
+    );
   }
 
   static String _formatRoadDistance(double meters) {
@@ -1514,24 +1518,60 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     return '${(meters / 1000.0).toStringAsFixed(1)} km';
   }
 
-  /// Exibe o HUD de manobra. Navegando, fica fixo como no Waze (sem
-  /// auto-ocultar); fora de navegação, some após 6s como antes.
+  /// Exibe o HUD por alguns segundos e some, como no Waze.
   void _showManeuverHud({bool resetTimer = true}) {
     if (!mounted) return;
     _hudHideTimer?.cancel();
     if (!_hudVisible) {
       setState(() => _hudVisible = true);
     }
-    if (resetTimer && !_isNavigating) {
+    if (resetTimer) {
       _hudHideTimer = Timer(const Duration(seconds: 6), () {
         if (mounted) setState(() => _hudVisible = false);
       });
     }
   }
 
+  /// Liga/desliga a voz do GPS (alto-falante azul = falando).
+  Future<void> _toggleVoiceMuted() async {
+    final next = !_voiceMuted;
+    setState(() => _voiceMuted = next);
+    await VoiceGuidance.instance.setMuted(next);
+  }
+
+  /// Canta a manobra 1x de longe (300 m) e 1x em cima (80 m). Chave por
+  /// manobra+rua p/ o refetch do trajeto (a cada 35 m) não repetir a frase.
+  void _maybeAnnounceManeuver(DeliveryStop targetStop) {
+    if (!_isNavigating || _voiceMuted) return;
+    final m = _currentManeuver();
+    if (m == null) return;
+    if (m.step.maneuver == ManeuverType.arrive) {
+      if (_legRemainingMeters >= 0 &&
+          _legRemainingMeters < 60 &&
+          _announcedArriveStopId != targetStop.id) {
+        _announcedArriveStopId = targetStop.id;
+        VoiceGuidance.instance.speak('Chegando ao destino');
+      }
+      return;
+    }
+    final key =
+        '${targetStop.id}|${m.step.maneuver.name}|${m.step.streetName}';
+    if (m.metersTo <= 300 && _announcedFarKey != key) {
+      _announcedFarKey = key;
+      VoiceGuidance.instance.speak(
+        VoiceGuidance.instance.farInstruction(m.step, m.metersTo),
+      );
+    } else if (m.metersTo <= 80 && _announcedNearKey != key) {
+      _announcedNearKey = key;
+      VoiceGuidance.instance
+          .speak(VoiceGuidance.instance.nearInstruction(m.step));
+    }
+  }
+
   /// Zera navegação + HUD + progresso de rua (sem rota não há o que guiar).
   void _resetNavigationState() {
     _hudHideTimer?.cancel();
+    VoiceGuidance.instance.stop();
     if (!mounted) return;
     setState(() {
       _isNavigating = false;
@@ -1545,14 +1585,26 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       _legClosestIdx = 0;
       _legRemainingMeters = -1;
       _hudVisible = false;
+      _lastHudManeuverKey = '';
+      _announcedFarKey = '';
+      _announcedNearKey = '';
+      _announcedArriveStopId = '';
     });
   }
 
-  /// Atualiza o progresso de rua + mantém o HUD visível durante a navegação.
+  /// Atualiza o progresso de rua e reexibe o HUD quando há manobra nova
+  /// ou o carro está a <250 m da parada (fora isso ele some sozinho).
   void _updateManeuverHud(LatLng pos, DeliveryStop targetStop) {
     if (!_isNavigating) return;
     _refreshLegProgress(pos);
-    if (!_hudVisible) _showManeuverHud();
+    final m = _currentManeuver();
+    final key = m == null ? 'dest' : '${m.index}|${m.step.maneuver.name}';
+    final nearStop =
+        _legRemainingMeters >= 0 && _legRemainingMeters < 250;
+    if (key != _lastHudManeuverKey || nearStop) {
+      _lastHudManeuverKey = key;
+      _showManeuverHud();
+    }
   }
 
 
@@ -1758,13 +1810,17 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                       Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (_isNavigating && !_followGps) ...[
+                          if (_isNavigating) ...[
                             _buildFloatingCircleButton(
                               context: context,
-                              icon: Icons.gps_fixed,
-                              tooltip: 'Recentralizar no veículo',
-                              isActive: true,
-                              onTap: _resumeCameraFollow,
+                              icon: _voiceMuted
+                                  ? Icons.volume_off_rounded
+                                  : Icons.volume_up_rounded,
+                              tooltip: _voiceMuted
+                                  ? 'Ativar voz do GPS'
+                                  : 'Silenciar voz do GPS',
+                              isActive: !_voiceMuted,
+                              onTap: _toggleVoiceMuted,
                             ),
                             const SizedBox(height: 10),
                           ],
@@ -1796,7 +1852,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                           _buildFloatingCircleButton(
                             context: context,
                             icon: Icons.navigation,
-                            tooltip: 'Modo Course-Up (rua apontando para cima)',
+                            tooltip: _courseUp
+                                ? 'Recentralizar automático: LIGADO (toque p/ soltar a câmera)'
+                                : 'Recentralizar automático: câmera atrás do cursor',
                             isActive: _courseUp,
                             onTap: _toggleCourseUp,
                           ),
