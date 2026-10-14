@@ -8,6 +8,14 @@ enum SpatialSlotType {
   meioDireito,
   portaLateral,
   portaTraseira,
+  // Compartimentos extras: só entram em cena quando o usuário adiciona
+  // espaço no baú. As 6 zonas acima continuam sendo o padrão.
+  compartimento7,
+  compartimento8,
+  compartimento9,
+  compartimento10,
+  compartimento11,
+  compartimento12,
 }
 
 class SpatialSlot {
@@ -97,6 +105,74 @@ class SpatialSlot {
     visualColor: AppColors.slotRearDoor,
   );
 
+  // ─── Extras (a partir do 7) ──────────────────────────────────────────────
+
+  static const SpatialSlot compartimento7 = SpatialSlot(
+    type: SpatialSlotType.compartimento7,
+    label: 'Compartimento 7',
+    description: 'Compartimento extra do baú',
+    loadingOrder: 7,
+    unloadingOrder: 7,
+    gridRow: 3,
+    gridCol: 0,
+    visualColor: AppColors.primaryBlue,
+  );
+
+  static const SpatialSlot compartimento8 = SpatialSlot(
+    type: SpatialSlotType.compartimento8,
+    label: 'Compartimento 8',
+    description: 'Compartimento extra do baú',
+    loadingOrder: 8,
+    unloadingOrder: 8,
+    gridRow: 3,
+    gridCol: 1,
+    visualColor: AppColors.primaryBlue,
+  );
+
+  static const SpatialSlot compartimento9 = SpatialSlot(
+    type: SpatialSlotType.compartimento9,
+    label: 'Compartimento 9',
+    description: 'Compartimento extra do baú',
+    loadingOrder: 9,
+    unloadingOrder: 9,
+    gridRow: 4,
+    gridCol: 0,
+    visualColor: AppColors.primaryBlue,
+  );
+
+  static const SpatialSlot compartimento10 = SpatialSlot(
+    type: SpatialSlotType.compartimento10,
+    label: 'Compartimento 10',
+    description: 'Compartimento extra do baú',
+    loadingOrder: 10,
+    unloadingOrder: 10,
+    gridRow: 4,
+    gridCol: 1,
+    visualColor: AppColors.primaryBlue,
+  );
+
+  static const SpatialSlot compartimento11 = SpatialSlot(
+    type: SpatialSlotType.compartimento11,
+    label: 'Compartimento 11',
+    description: 'Compartimento extra do baú',
+    loadingOrder: 11,
+    unloadingOrder: 11,
+    gridRow: 5,
+    gridCol: 0,
+    visualColor: AppColors.primaryBlue,
+  );
+
+  static const SpatialSlot compartimento12 = SpatialSlot(
+    type: SpatialSlotType.compartimento12,
+    label: 'Compartimento 12',
+    description: 'Compartimento extra do baú',
+    loadingOrder: 12,
+    unloadingOrder: 12,
+    gridRow: 5,
+    gridCol: 1,
+    visualColor: AppColors.primaryBlue,
+  );
+
   static List<SpatialSlot> get allSlots => [
     fundoEsquerdo,
     fundoDireito,
@@ -104,6 +180,12 @@ class SpatialSlot {
     meioDireito,
     portaLateral,
     portaTraseira,
+    compartimento7,
+    compartimento8,
+    compartimento9,
+    compartimento10,
+    compartimento11,
+    compartimento12,
   ];
 
   static SpatialSlot fromType(SpatialSlotType type) {
@@ -120,6 +202,18 @@ class SpatialSlot {
         return portaLateral;
       case SpatialSlotType.portaTraseira:
         return portaTraseira;
+      case SpatialSlotType.compartimento7:
+        return compartimento7;
+      case SpatialSlotType.compartimento8:
+        return compartimento8;
+      case SpatialSlotType.compartimento9:
+        return compartimento9;
+      case SpatialSlotType.compartimento10:
+        return compartimento10;
+      case SpatialSlotType.compartimento11:
+        return compartimento11;
+      case SpatialSlotType.compartimento12:
+        return compartimento12;
     }
   }
 

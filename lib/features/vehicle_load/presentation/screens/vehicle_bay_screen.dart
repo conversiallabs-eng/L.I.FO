@@ -7,6 +7,7 @@ import '../../../route_manifest/domain/models/spatial_slot.dart';
 import '../../../route_manifest/domain/models/delivery_stop.dart';
 import '../../../route_manifest/domain/models/package_item.dart';
 import '../../../route_manifest/presentation/manifest_controller.dart';
+import '../../data/bay_slots.dart';
 import '../../data/slot_names.dart';
 
 /// Baú interativo: cada quadrado é um compartimento de verdade.
@@ -112,92 +113,179 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
   ) {
     final slotPkgs = _packagesBySlot(stops);
     final stopsById = _stopsById(stops);
+    final int slotCount = ref.watch(baySlotCountProvider);
+    final List<SpatialSlot> slots =
+        SpatialSlot.allSlots.take(slotCount).toList();
 
-    Widget bay(SpatialSlotType type) {
-      final slot = SpatialSlot.fromType(type);
+    Widget bayCard(SpatialSlot slot) {
       // A planta só mostra o que o usuário realmente colocou no baú. O
       // compartimento automático do LIFO não é uma colocação real.
-      final placed = (slotPkgs[type] ?? [])
+      final placed = (slotPkgs[slot.type] ?? [])
           .where((p) => p.slotUserAssigned)
           .toList();
-      return Expanded(
-        child: _buildSlotBayCard(
-          slot: slot,
-          packages: placed,
-          stopsById: stopsById,
-          isDark: isDark,
-        ),
+      return _buildSlotBayCard(
+        slot: slot,
+        packages: placed,
+        stopsById: stopsById,
+        isDark: isDark,
       );
     }
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark ? AppColors.darkSurface : AppColors.lightSurface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: isDark ? AppColors.darkBorder : AppColors.lightBorder, width: 1.5),
-      ),
-      child: Column(
-        children: [
-          // Cabin Front Indicator
-          Container(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            decoration: BoxDecoration(
-              color: isDark ? AppColors.darkSurfaceElevated : AppColors.lightSurfaceElevated,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: isDark ? AppColors.darkBorder : AppColors.lightBorder),
+    final List<Widget> rows = [];
+    for (int i = 0; i < slots.length; i += 2) {
+      final SpatialSlot left = slots[i];
+      final SpatialSlot? right = (i + 1 < slots.length) ? slots[i + 1] : null;
+      rows.add(
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: bayCard(left)),
+            const SizedBox(width: 10),
+            Expanded(
+              child: right == null ? const SizedBox.shrink() : bayCard(right),
             ),
-            child: const Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.directions_car_outlined, size: 18),
-                SizedBox(width: 8),
-                Text(
-                  'FRENTE DO VEICULO / CABINE DO MOTORISTA',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.0,
-                  ),
+          ],
+        ),
+      );
+      if (i + 2 < slots.length) rows.add(const SizedBox(height: 10));
+    }
+
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: isDark ? AppColors.darkSurface : AppColors.lightSurface,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: isDark ? AppColors.darkBorder : AppColors.lightBorder,
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.07),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            children: [
+              // Frente do veículo / cabine
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 14),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? AppColors.darkSurfaceElevated
+                      : AppColors.lightSurfaceElevated,
+                  borderRadius: BorderRadius.circular(12),
                 ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          // Row 0: Fundo (Deepest - Loaded first, Unloaded last)
-          Row(
-            children: [
-              bay(SpatialSlotType.fundoEsquerdo),
-              const SizedBox(width: 8),
-              bay(SpatialSlotType.fundoDireito),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.directions_car_outlined,
+                      size: 18,
+                      color: AppColors.primaryBlue,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'FRENTE DO VEÍCULO',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.4,
+                        color: isDark
+                            ? AppColors.darkTextSecondary
+                            : AppColors.lightTextSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              ...rows,
             ],
           ),
-
-          const SizedBox(height: 8),
-
-          // Row 1: Meio
-          Row(
-            children: [
-              bay(SpatialSlotType.meioEsquerdo),
-              const SizedBox(width: 8),
-              bay(SpatialSlotType.meioDireito),
-            ],
-          ),
-
-          const SizedBox(height: 8),
-
-          // Row 2: Portas (Immediate Access - Loaded LAST, Unloaded FIRST)
-          Row(
-            children: [
-              bay(SpatialSlotType.portaTraseira),
-              const SizedBox(width: 8),
-              bay(SpatialSlotType.portaLateral),
-            ],
-          ),
-        ],
-      ),
+        ),
+        const SizedBox(height: 14),
+        _buildSlotControls(isDark, slots, stops),
+      ],
     );
+  }
+
+  /// "+ Adicionar" / "− Excluir último": as 6 zonas LIFO ficam fixas, o
+  /// usuário só mexe nos extras, e o último só sai se estiver vazio.
+  Widget _buildSlotControls(
+    bool isDark,
+    List<SpatialSlot> slots,
+    List<DeliveryStop> stops,
+  ) {
+    final int count = slots.length;
+    final bool canAdd = count < BaySlotsNotifier.maxSlots;
+    final bool canRemove =
+        count > BaySlotsNotifier.minSlots && _slotIsEmpty(stops, slots.last);
+
+    final ButtonStyle style = OutlinedButton.styleFrom(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+    );
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: canAdd
+                    ? () => ref
+                        .read(baySlotCountProvider.notifier)
+                        .setCount(count + 1)
+                    : null,
+                style: style,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('Adicionar'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: canRemove
+                    ? () => ref
+                        .read(baySlotCountProvider.notifier)
+                        .setCount(count - 1)
+                    : null,
+                style: style,
+                icon: const Icon(Icons.remove, size: 18),
+                label: const Text('Excluir último'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          !canAdd
+              ? 'Limite de ${BaySlotsNotifier.maxSlots} compartimentos atingido.'
+              : 'As 6 zonas base ficam; "Excluir último" só remove o último se estiver vazio.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 11,
+            color: isDark ? AppColors.darkTextMuted : AppColors.lightTextMuted,
+          ),
+        ),
+      ],
+    );
+  }
+
+  bool _slotIsEmpty(List<DeliveryStop> stops, SpatialSlot slot) {
+    for (final stop in stops) {
+      for (final pkg in stop.packages) {
+        if (pkg.slotUserAssigned && pkg.spatialSlot.type == slot.type) {
+          return false;
+        }
+      }
+    }
+    return true;
   }
 
   Widget _buildSlotBayCard({
@@ -224,16 +312,18 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
     return InkWell(
       // Sempre abre: quadrado vazio também bipaatribui e renomeia.
       onTap: () => _showSlotSheet(context, slot, isDark),
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(14),
       child: Container(
-        height: 132,
-        padding: const EdgeInsets.all(10),
+        height: 130,
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: isDark ? AppColors.darkSurfaceElevated : AppColors.lightSurfaceElevated,
-          borderRadius: BorderRadius.circular(12),
+          color: isDark
+              ? AppColors.darkSurfaceElevated
+              : AppColors.lightSurfaceElevated,
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(
             color: Colors.black,
-            width: hasPackages ? 2.2 : 1.4,
+            width: hasPackages ? 2.0 : 1.4,
           ),
         ),
         child: Column(
@@ -242,18 +332,27 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
             Row(
               children: [
                 Container(
-                  width: 8,
-                  height: 8,
-                  decoration: BoxDecoration(color: AppColors.primaryBlue, shape: BoxShape.circle),
+                  width: 9,
+                  height: 9,
+                  decoration: BoxDecoration(
+                    color: hasPackages
+                        ? AppColors.primaryBlue
+                        : (isDark
+                            ? AppColors.darkTextMuted
+                            : AppColors.lightTextMuted),
+                    shape: BoxShape.circle,
+                  ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 7),
                 Expanded(
                   child: Text(
                     label,
                     style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: isDark
+                          ? AppColors.darkTextPrimary
+                          : AppColors.lightTextPrimary,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -270,12 +369,14 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w800,
-                  color: isDark ? AppColors.darkTextPrimary : AppColors.lightTextPrimary,
+                  color: isDark
+                      ? AppColors.darkTextPrimary
+                      : AppColors.lightTextPrimary,
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: 3),
               Text(
                 // Sem peso no manifesto, mostra só o descarrega — sem "0.0 kg".
                 hasKnownWeight
@@ -284,18 +385,38 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
                 style: TextStyle(
                   fontSize: 10.5,
                   fontWeight: FontWeight.w600,
-                  color: isDark ? AppColors.darkTextSecondary : AppColors.lightTextSecondary,
+                  color: isDark
+                      ? AppColors.darkTextSecondary
+                      : AppColors.lightTextSecondary,
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ] else ...[
-              Text(
-                'Vazio • toque p/ bipar',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: isDark ? AppColors.darkTextMuted : AppColors.lightTextMuted,
-                ),
+              Row(
+                children: [
+                  Icon(
+                    Icons.add_circle_outline,
+                    size: 14,
+                    color: isDark
+                        ? AppColors.darkTextMuted
+                        : AppColors.lightTextMuted,
+                  ),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      'Toque para bipar',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: isDark
+                            ? AppColors.darkTextMuted
+                            : AppColors.lightTextMuted,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
               ),
             ],
           ],

@@ -45,6 +45,33 @@ void main() {
       },
     );
 
+    test('Compartimentos extras existem e resolvem por tipo e label', () {
+      expect(SpatialSlot.allSlots.length, 12);
+
+      // As 6 zonas base seguem nas mesmas posições (nada mudou pra elas).
+      expect(SpatialSlot.allSlots.first.type, SpatialSlotType.fundoEsquerdo);
+      expect(SpatialSlot.allSlots[5].type, SpatialSlotType.portaTraseira);
+
+      expect(
+        SpatialSlot.fromType(SpatialSlotType.compartimento7).label,
+        'Compartimento 7',
+      );
+      expect(
+        SpatialSlot.fromString('Compartimento 12').type,
+        SpatialSlotType.compartimento12,
+      );
+
+      // O LIFO continua mapeando apenas as zonas base.
+      expect(
+        SpatialSlot.slotForDeliverySequence(1, 10).type,
+        SpatialSlotType.portaTraseira,
+      );
+      expect(
+        SpatialSlot.slotForDeliverySequence(9, 10).type,
+        SpatialSlotType.fundoEsquerdo,
+      );
+    });
+
     test('Route optimizer reassigns LIFO slots and sequences', () {
       final stops = [
         DeliveryStop(
