@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import '../../../../core/map/tile_cache.dart';
 import '../../../../core/theme/app_colors.dart';
 
 class MapCanvasMarker {
@@ -57,14 +58,12 @@ class LogisticsMapCanvas extends StatelessWidget {
   });
 
   // Tiles 100% sem API key (CARTO passou a exigir key desde 25/09/2026).
-  // Estilo minimalista tipo Uber/Circuit, nas duas variantes do dispositivo:
-  // - Dark: ESRI Canvas Dark Gray Base + Reference (fundo grafite, ruas suaves).
-  // - Light: ESRI Canvas Light Gray Base + Reference (fundo claro minimalista).
+  // - Light: ESRI World Street Map (COLORIDO estilo iFood/Google: ruas,
+  //   parques, água e labels vibrantes — inclui rótulos, sem overlay extra).
+  // - Dark: ESRI Canvas Dark Gray Base + Reference (grafite, combina com a UI).
   // - Satellite: ESRI World Imagery.
-  static const String _esriLightBase =
-      'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}';
-  static const String _esriLightRef =
-      'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}';
+  static const String _esriStreets =
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}';
   static const String _esriDarkBase =
       'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}';
   static const String _esriDarkRef =
@@ -214,11 +213,20 @@ class LogisticsMapCanvas extends StatelessWidget {
       }
     }
 
+    // Retina: em telas de alta densidade, compõe cada tile com 4 tiles
+    // do zoom acima (nítido como o iFood). Com cache em disco o custo some
+    // após a 1ª visita.
+    final retina = RetinaMode.isHighDensity(context);
+    final tileProvider = TileCache.instance.provider;
+
     return Stack(
       children: [
         Container(
           color: canvasBg,
-          child: FlutterMap(
+          // Isola o repaint do mapa: o GPS atualiza a tela toda a cada fix,
+          // mas os tiles/marcadores só repintam quando mudam de verdade.
+          child: RepaintBoundary(
+            child: FlutterMap(
             mapController: mapController,
             options: MapOptions(
               initialCenter: initialCenter,
@@ -244,9 +252,11 @@ class LogisticsMapCanvas extends StatelessWidget {
                 TileLayer(
                   urlTemplate: _satelliteTile,
                   userAgentPackageName: 'com.lifo.app',
+                  tileProvider: tileProvider,
+                  retinaMode: retina,
                   maxZoom: 19,
                   maxNativeZoom: 18,
-                  keepBuffer: 8,
+                  keepBuffer: 4,
                   panBuffer: 2,
                   tileDisplay: const TileDisplay.fadeIn(),
                   errorTileCallback: (tile, error, stackTrace) {},
@@ -255,9 +265,11 @@ class LogisticsMapCanvas extends StatelessWidget {
                 TileLayer(
                   urlTemplate: _esriDarkBase,
                   userAgentPackageName: 'com.lifo.app',
+                  tileProvider: tileProvider,
+                  retinaMode: retina,
                   maxZoom: 19,
                   maxNativeZoom: 16,
-                  keepBuffer: 8,
+                  keepBuffer: 4,
                   panBuffer: 2,
                   tileDisplay: const TileDisplay.fadeIn(),
                   errorTileCallback: (tile, error, stackTrace) {},
@@ -265,30 +277,25 @@ class LogisticsMapCanvas extends StatelessWidget {
                 TileLayer(
                   urlTemplate: _esriDarkRef,
                   userAgentPackageName: 'com.lifo.app',
+                  tileProvider: tileProvider,
+                  retinaMode: retina,
                   maxZoom: 19,
                   maxNativeZoom: 16,
-                  keepBuffer: 8,
+                  keepBuffer: 4,
                   panBuffer: 2,
                   tileDisplay: const TileDisplay.fadeIn(),
                   errorTileCallback: (tile, error, stackTrace) {},
                 ),
               ] else ...[
+                // Rua colorida (1 camada só: rótulos já vêm no tile).
                 TileLayer(
-                  urlTemplate: _esriLightBase,
+                  urlTemplate: _esriStreets,
                   userAgentPackageName: 'com.lifo.app',
+                  tileProvider: tileProvider,
+                  retinaMode: retina,
                   maxZoom: 19,
-                  maxNativeZoom: 16,
-                  keepBuffer: 8,
-                  panBuffer: 2,
-                  tileDisplay: const TileDisplay.fadeIn(),
-                  errorTileCallback: (tile, error, stackTrace) {},
-                ),
-                TileLayer(
-                  urlTemplate: _esriLightRef,
-                  userAgentPackageName: 'com.lifo.app',
-                  maxZoom: 19,
-                  maxNativeZoom: 16,
-                  keepBuffer: 8,
+                  maxNativeZoom: 19,
+                  keepBuffer: 4,
                   panBuffer: 2,
                   tileDisplay: const TileDisplay.fadeIn(),
                   errorTileCallback: (tile, error, stackTrace) {},
@@ -380,7 +387,8 @@ class LogisticsMapCanvas extends StatelessWidget {
                   ],
                 ),
             ],
-          ),
+            ),
+            ),
         ),
 
         // Atribuição OSM/Esri (exigida por licença)
@@ -396,7 +404,7 @@ class LogisticsMapCanvas extends StatelessWidget {
             child: Text(
               isSatellite
                   ? '© Esri, Maxar, Earthstar Geographics'
-                  : '© Esri, © OpenStreetMap',
+                  : '© Esri, HERE, Garmin, © OpenStreetMap',
               style: const TextStyle(
                 color: Colors.white70,
                 fontSize: 9,

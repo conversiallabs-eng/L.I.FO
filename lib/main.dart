@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme/app_theme.dart';
 import 'core/database/app_database.dart';
+import 'core/map/tile_cache.dart';
 import 'core/network/supabase_service.dart';
 import 'features/dashboard/presentation/screens/home_dashboard_screen.dart';
 import 'features/auth/presentation/controllers/auth_controller.dart';
@@ -26,6 +27,9 @@ void main() async {
 
   // Initialize SQLite immediately — fast, local-only, no network I/O
   await AppDatabase.instance.database;
+
+  // Cache de tiles do mapa em disco (Hive) — nunca trava o boot.
+  await TileCache.instance.initialize();
 
   // Initialize Supabase before the app renders so Auth state is ready
   // on the very first frame (required for subscription check on startup)

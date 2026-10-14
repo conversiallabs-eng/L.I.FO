@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import '../../../../core/map/tile_cache.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../route_manifest/domain/models/delivery_stop.dart';
 import '../../../route_manifest/presentation/manifest_controller.dart';
@@ -62,11 +63,15 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
         ? stops[_activeStopIndex.clamp(0, stops.length - 1)]
         : null;
 
+    final retina = RetinaMode.isHighDensity(context);
+    final tileProvider = TileCache.instance.provider;
+
     return Scaffold(
       body: Stack(
         children: [
-          // Minimalist Map Viewport
-          FlutterMap(
+          // Minimalist Map Viewport (repaint isolado do resto da tela)
+          RepaintBoundary(
+            child: FlutterMap(
             mapController: _mapController,
             options: MapOptions(
               initialCenter: defaultCenter,
@@ -78,16 +83,18 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
                   : AppColors.lightBackground,
             ),
             children: [
-              // Tiles sem API key, estilo minimalista Uber:
-              // noturno = ESRI Dark Gray, claro = ESRI Light Gray.
+              // Tiles sem API key + retina + cache em disco:
+              // noturno = ESRI Dark Gray, claro = ESRI Street Map (colorido).
               if (isCabinNight) ...[
                 TileLayer(
                   urlTemplate:
                       'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}',
                   userAgentPackageName: 'com.lifo.app',
+                  tileProvider: tileProvider,
+                  retinaMode: retina,
                   maxZoom: 19,
                   maxNativeZoom: 16,
-                  keepBuffer: 8,
+                  keepBuffer: 4,
                   panBuffer: 2,
                   tileDisplay: const TileDisplay.fadeIn(),
                 ),
@@ -95,30 +102,24 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
                   urlTemplate:
                       'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
                   userAgentPackageName: 'com.lifo.app',
+                  tileProvider: tileProvider,
+                  retinaMode: retina,
                   maxZoom: 19,
                   maxNativeZoom: 16,
-                  keepBuffer: 8,
+                  keepBuffer: 4,
                   panBuffer: 2,
                   tileDisplay: const TileDisplay.fadeIn(),
                 ),
               ] else ...[
                 TileLayer(
                   urlTemplate:
-                      'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
+                      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
                   userAgentPackageName: 'com.lifo.app',
+                  tileProvider: tileProvider,
+                  retinaMode: retina,
                   maxZoom: 19,
-                  maxNativeZoom: 16,
-                  keepBuffer: 8,
-                  panBuffer: 2,
-                  tileDisplay: const TileDisplay.fadeIn(),
-                ),
-                TileLayer(
-                  urlTemplate:
-                      'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
-                  userAgentPackageName: 'com.lifo.app',
-                  maxZoom: 19,
-                  maxNativeZoom: 16,
-                  keepBuffer: 8,
+                  maxNativeZoom: 19,
+                  keepBuffer: 4,
                   panBuffer: 2,
                   tileDisplay: const TileDisplay.fadeIn(),
                 ),
@@ -179,6 +180,7 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
                 }).toList(),
               ),
             ],
+            ),
           ),
 
           // Top HUD Bar: Night mode toggle & Recenter
