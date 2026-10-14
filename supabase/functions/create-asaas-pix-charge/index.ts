@@ -26,19 +26,26 @@ serve(async (req) => {
     const directBaseUrl = "https://api.asaas.com/v3";
 
     async function asaasFetch(path: string, init: RequestInit = {}): Promise<Response> {
-      const headers = {
-        "Content-Type": "application/json",
-        "access_token": asaasKey,
-        "User-Agent": "LIFO-Logistica-App/1.0",
-        ...((init.headers as Record<string, string>) ?? {}),
-      };
       if (proxyUrl) {
+        // Via proxy: usa access-token (com traco) porque CDN/nginx derruba header com underscore
+        const headers = {
+          "Content-Type": "application/json",
+          "access-token": asaasKey,
+          "User-Agent": "LIFO-Logistica-App/1.0",
+          ...((init.headers as Record<string, string>) ?? {}),
+        };
         const sep = proxyUrl.includes("?") ? "&" : "?";
         return await fetch(`${proxyUrl}${sep}path=${encodeURIComponent(path)}`, {
           ...init,
           headers: { ...headers, "x-proxy-secret": proxySecret },
         });
       }
+      const headers = {
+        "Content-Type": "application/json",
+        "access_token": asaasKey,
+        "User-Agent": "LIFO-Logistica-App/1.0",
+        ...((init.headers as Record<string, string>) ?? {}),
+      };
       return await fetch(`${directBaseUrl}${path}`, { ...init, headers });
     }
 

@@ -4,7 +4,7 @@ const ASAAS_BASE = 'https://api.asaas.com/v3';
 const ALLOWED = ['/customers', '/payments'];
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Headers: authorization, x-client-info, apikey, content-type, access_token, x-proxy-secret');
+header('Access-Control-Allow-Headers: authorization, x-client-info, apikey, content-type, access_token, access-token, x-proxy-secret');
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(200); exit; }
 $secret = isset($_SERVER['HTTP_X_PROXY_SECRET']) ? $_SERVER['HTTP_X_PROXY_SECRET'] : '';
 if ($secret !== PROXY_SECRET) { http_response_code(403); echo json_encode(['error' => 'proxy unauthorized']); exit; }
@@ -18,7 +18,10 @@ foreach (ALLOWED as $a) { if (strpos($path, $a) === 0) { $ok = true; break; } }
 if (!$ok) { http_response_code(400); echo json_encode(['error' => 'path bloqueado']); exit; }
 $target = ASAAS_BASE . $path . ($qs ? "?$qs" : '');
 $headers_in = function_exists('getallheaders') ? getallheaders() : array();
-$token = isset($headers_in['access_token']) ? $headers_in['access_token'] : (isset($headers_in['Access_token']) ? $headers_in['Access_token'] : '');
+$lower = array();
+foreach ($headers_in as $hk => $hv) { $lower[strtolower($hk)] = $hv; }
+// Aceita access-token (com traco, atravessa CDN/nginx) ou access_token direto
+$token = isset($lower['access-token']) ? $lower['access-token'] : (isset($lower['access_token']) ? $lower['access_token'] : '');
 $ch = curl_init($target);
 curl_setopt_array($ch, array(
   CURLOPT_RETURNTRANSFER => true,
