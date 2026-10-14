@@ -329,6 +329,8 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   final GlobalKey _coachSearchKey = GlobalKey();
   final GlobalKey _coachScannerKey = GlobalKey();
   final GlobalKey _coachOptionsKey = GlobalKey();
+  final GlobalKey _coachImportKey = GlobalKey();
+  final GlobalKey _coachAddStopKey = GlobalKey();
   final GlobalKey _coachDrawerKey = GlobalKey();
   final GlobalKey _coachArrowKey = GlobalKey();
   final GlobalKey _coachSpeakerKey = GlobalKey();
@@ -339,25 +341,49 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     if (!mounted) return;
     if (!force && await AppTutorial.isSeen(AppTutorial.homeSeenKey)) return;
     if (!mounted) return;
-    await AppTutorial.showOnce(context, AppTutorial.homeSeenKey, [
-      CoachStep(
-        targetKey: _coachSearchKey,
-        title: 'Busque endereço ou etiqueta',
-        body:
-            'Digite um endereço para adicionar parada rapidinho — ou um código de barras para achar o pacote e a parada dele no ato.',
-      ),
-      CoachStep(
-        targetKey: _coachScannerKey,
-        title: 'Bipe a carga pela câmera',
-        body:
-            'Aponta para a etiqueta e o app marca o volume como carregado, mostrando a parada e a posição dele no baú.',
-      ),
-      CoachStep(
-        targetKey: _coachOptionsKey,
-        title: 'Aqui mora tudo: ⋯',
-        body:
-            'Importar Manifesto (CSV, Excel, Shopee, ML, Amazon), Carregar Veículo na ordem LIFO, Versões da Rota que nunca se perdem e Otimizar a partir do GPS.',
-      ),
+    // Estado vazio (1º login) tem outra tela: busca/scanner/⋯ nem existem.
+    // Os passos se adaptam ao que está visível de verdade.
+    final stops =
+        ref.read(manifestControllerProvider).currentVersion?.stops ?? [];
+    final steps = <CoachStep>[];
+    if (stops.isEmpty) {
+      steps.addAll([
+        CoachStep(
+          targetKey: _coachImportKey,
+          title: 'Comece importando',
+          body:
+              'Toque em Importar manifesto: vale CSV, Excel, Shopee, Mercado Livre e Amazon. Com o GPS ligado, a parada 1 sai sempre a mais perto de você.',
+        ),
+        CoachStep(
+          targetKey: _coachAddStopKey,
+          title: 'Ou cadastre na mão',
+          body:
+              'Adicionar parada manual: digite o endereço que o app localiza no mapa e otimiza junto na rota.',
+        ),
+      ]);
+    } else {
+      steps.addAll([
+        CoachStep(
+          targetKey: _coachSearchKey,
+          title: 'Busque endereço ou etiqueta',
+          body:
+              'Digite um endereço para adicionar parada rapidinho — ou um código de barras para achar o pacote e a parada dele no ato.',
+        ),
+        CoachStep(
+          targetKey: _coachScannerKey,
+          title: 'Bipe a carga pela câmera',
+          body:
+              'Aponta para a etiqueta e o app marca o volume como carregado, mostrando a parada e a posição dele no baú.',
+        ),
+        CoachStep(
+          targetKey: _coachOptionsKey,
+          title: 'Aqui mora tudo: ⋯',
+          body:
+              'Importar Manifesto (CSV, Excel, Shopee, ML, Amazon), Carregar Veículo na ordem LIFO, Versões da Rota que nunca se perdem e Otimizar a partir do GPS.',
+        ),
+      ]);
+    }
+    steps.addAll([
       CoachStep(
         targetKey: _coachDrawerKey,
         title: 'Menu da conta',
@@ -371,6 +397,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
             'Com ela azul, a câmera anda nas costas do cursor. Arrastou o mapa? Ela volta sozinha em segundos.',
       ),
     ]);
+    await AppTutorial.showOnce(context, AppTutorial.homeSeenKey, steps);
   }
 
   Future<void> _startNavCoach() async {
@@ -2386,12 +2413,14 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
               ),
               const SizedBox(height: 16),
               ElevatedButton.icon(
+                key: _coachImportKey,
                 onPressed: _openImport,
                 icon: const Icon(Icons.upload_file_outlined, size: 18),
                 label: const Text('Importar manifesto'),
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
+                key: _coachAddStopKey,
                 onPressed: _openAddStop,
                 icon: const Icon(Icons.add_location_alt_outlined, size: 18),
                 label: const Text('Adicionar parada manual'),

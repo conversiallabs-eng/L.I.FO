@@ -55,7 +55,9 @@ class _CoachTutorialState extends State<CoachTutorial>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     )..repeat(reverse: true);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _resolve(forward: true),
+    );
   }
 
   @override
@@ -76,39 +78,51 @@ class _CoachTutorialState extends State<CoachTutorial>
     }
   }
 
-  /// Mede o alvo atual; se sumiu, pula para o próximo com alvo válido.
-  /// Se nenhum restar, fecha sozinho.
-  void _measure() {
+  int _retries = 0;
+
+  /// Resolve o alvo andando na direção da navegação: p/ frente avança,
+  /// p/ trás (Voltar) volta de verdade — nunca quica p/ frente sozinho.
+  /// Se nada resolver, tenta 2x (layout atrasado) e depois fecha sozinho.
+  void _resolve({required bool forward}) {
     if (!mounted) return;
     var i = _index;
     Rect? rect;
-    while (i < widget.steps.length) {
+    while (i >= 0 && i < widget.steps.length) {
       rect = _rectOf(widget.steps[i].targetKey);
       if (rect != null) break;
-      i++;
+      i += forward ? 1 : -1;
     }
     if (!mounted) return;
-    if (rect == null) {
-      Navigator.of(context).pop();
+    if (rect != null) {
+      _retries = 0;
+      setState(() {
+        _index = i;
+        _hole = rect;
+      });
       return;
     }
-    setState(() {
-      _index = i;
-      _hole = rect;
-    });
+    if (_retries < 2) {
+      _retries++;
+      Future.delayed(const Duration(milliseconds: 300), () {
+        if (mounted) _resolve(forward: forward);
+      });
+      return;
+    }
+    Navigator.of(context).pop();
   }
 
   void _go(int i) {
     HapticFeedback.selectionClick();
-    if (i >= widget.steps.length) {
+    if (i >= widget.steps.length || i < 0) {
       Navigator.of(context).pop();
       return;
     }
+    final forward = i >= _index;
     setState(() {
       _index = i;
       _hole = null;
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _resolve(forward: forward));
   }
 
   @override
