@@ -16,5 +16,5 @@ jobs:
           protocol: ftp
           port: 21
           local-dir: ./site/
-          server-dir: ./public_html/
+          server-dir: ./domains/lifo.com.br/public_html/
           dangerous-clean-slate: true
