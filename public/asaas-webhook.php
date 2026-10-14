@@ -8,7 +8,7 @@ header("Content-Type: application/json");
 $configFile = dirname(__DIR__) . "/asaas-proxy-config.php";
 if (is_file($configFile)) { require $configFile; }
 $tokenOk = defined("ASAAS_WEBHOOK_TOKEN") && ASAAS_WEBHOOK_TOKEN !== "";
-$got = isset($_SERVER["HTTP_ASAAS_TOKEN"]) ? $_SERVER["HTTP_ASAAS_TOKEN"] : (isset($_GET["token"]) ? $_GET["token"] : "");
+$got = isset($_SERVER["HTTP_ASAAS_ACCESS_TOKEN"]) ? $_SERVER["HTTP_ASAAS_ACCESS_TOKEN"] : (isset($_GET["token"]) ? $_GET["token"] : "");
 if (!$tokenOk || !hash_equals(ASAAS_WEBHOOK_TOKEN, (string)$got)) {
   http_response_code(403);
   echo json_encode(array("error" => "webhook unauthorized"));
