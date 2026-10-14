@@ -52,6 +52,10 @@ serve(async (req) => {
     // 1. Busca ou cria o cliente no Asaas
     let customerId = "";
     const searchRes = await asaasFetch(`/customers?email=${encodeURIComponent(customer_email)}`);
+    if (!searchRes.ok) {
+      const t = await searchRes.text();
+      throw new Error(`Erro ao buscar cliente no Asaas (${searchRes.status}): ${t.substring(0, 200)}`);
+    }
     const searchData = await searchRes.json();
 
     if (searchData.data && searchData.data.length > 0) {
