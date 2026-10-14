@@ -1578,6 +1578,31 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     await VoiceGuidance.instance.setMuted(next);
   }
 
+  /// Fala na hora em que a rota inicia (prova de voz + destino).
+  /// Se o aparelho não tiver voz em português, avisa como instalar.
+  Future<void> _speakRouteOpening(DeliveryStop stop) async {
+    if (_voiceMuted) return;
+    final destination =
+        stop.recipientName.trim().isNotEmpty ? stop.recipientName.trim() : stop.address.trim();
+    if (destination.isEmpty) return;
+    final issue = await VoiceGuidance.instance.checkVoice();
+    if (!mounted) return;
+    if (issue != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Sem voz em português no aparelho: instale o app "Google TTS" e baixe a voz Português (Brasil). Tentando com a voz padrão…',
+          ),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 6),
+        ),
+      );
+    }
+    await VoiceGuidance.instance.speak(
+      VoiceGuidance.instance.openingInstruction(destination),
+    );
+  }
+
   /// Canta a manobra 1x de longe (300 m) e 1x em cima (80 m). Chave por
   /// manobra+rua p/ o refetch do trajeto (a cada 35 m) não repetir a frase.
   void _maybeAnnounceManeuver(DeliveryStop targetStop) {
@@ -1653,6 +1678,8 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   void _startInAppNavigation(DeliveryStop stop, {bool forceFollow = false}) {
     _fetchRouteToTargetStop(stop);
     _showManeuverHud();
+    // A voz abre junto com a rota (não espera a 1ª manobra chegar a 300 m).
+    _speakRouteOpening(stop);
 
     final alreadyNavigating = _isNavigating;
 
