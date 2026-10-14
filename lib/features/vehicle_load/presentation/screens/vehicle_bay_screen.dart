@@ -34,15 +34,6 @@ class _VehicleBayScreenState extends ConsumerState<VehicleBayScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Compartimento de Carga LIFO'),
-        actions: [
-          IconButton(
-            tooltip: 'Recalcular LIFO',
-            icon: const Icon(Icons.sync_outlined),
-            onPressed: () {
-              ref.read(manifestControllerProvider.notifier).reoptimizeRoute();
-            },
-          ),
-        ],
       ),
       body: manifestState.isLoading
           ? const Center(child: CircularProgressIndicator())
