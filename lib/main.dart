@@ -86,7 +86,7 @@ class LifoApp extends ConsumerWidget {
         },
         layoutBuilder: (current, previous) => Stack(
           alignment: Alignment.center,
-          children: [...previous, if (current != null) current],
+          children: [...previous, ?current],
         ),
         child: KeyedSubtree(key: ValueKey(switchKey), child: home),
       ),
