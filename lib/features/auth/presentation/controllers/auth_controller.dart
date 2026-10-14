@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -64,29 +65,52 @@ class AuthController extends StateNotifier<AuthState> {
 
   Future<void> _loadProfile() async {
     try {
-      // Aguarda a recuperação da sessão (cold start restaura async).
+      // 0. Garante o Supabase iniciado (se o boot foi sem rede, tenta de novo).
+      if (!SupabaseService.instance.isInitialized) {
+        debugPrint('AuthBoot: Supabase não iniciou no main, retentando…');
+        await SupabaseService.instance.initialize();
+      }
+
+      // 1. Aguarda a sessão persistida voltar (storage local é async).
       var supaUser = SupabaseService.instance.currentUser;
+      for (var i = 0;
+          supaUser == null && i < 25;
+          i++) {
+        await Future.delayed(const Duration(milliseconds: 200));
+        supaUser = SupabaseService.instance.currentUser;
+      }
       if (supaUser == null) {
-        // Tenta renovar sessão expirada com o refresh token salvo
+        // 2. Nada restaurado: tenta renovar com o refresh token salvo
+        // (access token expirado entre um boot e outro).
+        debugPrint('AuthBoot: sem sessão restaurada, tentando refresh…');
         supaUser = await SupabaseService.instance.refreshSession();
       }
       if (supaUser == null) {
-        for (var i = 0;
-            i < 10 && SupabaseService.instance.currentUser == null;
-            i++) {
-          await Future.delayed(const Duration(milliseconds: 200));
-        }
-        supaUser = SupabaseService.instance.currentUser;
+        debugPrint('AuthBoot: sem sessão (login necessário).');
+        state = state.copyWith(user: _guestProfile(), isBooting: false);
+        return;
       }
-      if (supaUser != null) {
-        final remoteProfile = await SupabaseService.instance.fetchUserProfile();
+
+      // 3. Sessão OK: busca o perfil com retentativas (rede no boot falha
+      // direto — era isso que derrubava o login "permanente").
+      debugPrint('AuthBoot: sessão de ${supaUser.email}, buscando perfil…');
+      for (var attempt = 1; attempt <= 4; attempt++) {
+        final remoteProfile =
+            await SupabaseService.instance.fetchUserProfile();
         if (remoteProfile != null) {
+          debugPrint('AuthBoot: perfil restaurado.');
           state = state.copyWith(user: remoteProfile, isBooting: false);
           return;
         }
-        // Sessão válida mas sem perfil no servidor: cai pro login.
+        // Só espera e tenta de novo se a sessão continua válida.
+        if (SupabaseService.instance.currentUser == null) break;
+        debugPrint('AuthBoot: perfil tentativa $attempt falhou, retentando…');
+        await Future.delayed(const Duration(seconds: 2));
       }
-    } catch (_) {}
+      debugPrint('AuthBoot: sessão válida mas sem perfil no servidor.');
+    } catch (e) {
+      debugPrint('AuthBoot: erro $e');
+    }
     state = state.copyWith(user: _guestProfile(), isBooting: false);
   }
 
