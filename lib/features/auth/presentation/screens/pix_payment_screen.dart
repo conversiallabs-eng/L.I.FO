@@ -45,7 +45,10 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
 
   Timer? _pollTimer;
   Timer? _clockTimer;
-  Duration _remaining = Duration.zero;
+  // Relógio isolado: atualiza SÓ o cronômetro, sem rebuildar o QR.
+  late final ValueNotifier<Duration> _remainingN = ValueNotifier(Duration.zero);
+  // QR decodificado UMA vez — nunca recriado nos rebuilds (era o pisca).
+  ImageProvider? _qrProvider;
   bool _checkingNow = false;
   bool _paid = false;
   bool _copied = false;
@@ -74,6 +77,15 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
     );
     _enter.forward();
 
+    // Decodifica o QR uma única vez (fora do build).
+    final b64 = widget.pix.qrCodeBase64;
+    if (b64 != null && b64.isNotEmpty) {
+      try {
+        final clean = b64.contains(',') ? b64.split(',').last : b64;
+        _qrProvider = MemoryImage(base64Decode(clean));
+      } catch (_) {}
+    }
+
     _success = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 700),
@@ -91,9 +103,8 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
 
   void _tickClock() {
     if (!mounted || _paid) return;
-    setState(() {
-      _remaining = widget.pix.expirationDate.difference(DateTime.now());
-    });
+    // Sem setState: só o cronômetro escuta este notifier.
+    _remainingN.value = widget.pix.expirationDate.difference(DateTime.now());
   }
 
   Future<void> _pollOnce() async {
@@ -127,22 +138,11 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
     if (mounted) Navigator.of(context).pop(true);
   }
 
-  ImageProvider? _qrImage() {
-    final b64 = widget.pix.qrCodeBase64;
-    if (b64 == null || b64.isEmpty) return null;
-    try {
-      final clean = b64.contains(',') ? b64.split(',').last : b64;
-      return MemoryImage(base64Decode(clean));
-    } catch (_) {
-      return null;
-    }
-  }
-
-  String _formatRemaining() {
-    if (_remaining.isNegative) return '00:00:00';
-    final h = _remaining.inHours.toString().padLeft(2, '0');
-    final m = (_remaining.inMinutes % 60).toString().padLeft(2, '0');
-    final s = (_remaining.inSeconds % 60).toString().padLeft(2, '0');
+  String _formatRemaining(Duration d) {
+    if (d.isNegative) return '00:00:00';
+    final h = d.inHours.toString().padLeft(2, '0');
+    final m = (d.inMinutes % 60).toString().padLeft(2, '0');
+    final s = (d.inSeconds % 60).toString().padLeft(2, '0');
     return '$h:$m:$s';
   }
 
@@ -159,6 +159,7 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
   void dispose() {
     _pollTimer?.cancel();
     _clockTimer?.cancel();
+    _remainingN.dispose();
     _enter.dispose();
     _success.dispose();
     super.dispose();
@@ -207,7 +208,6 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
   // ── ESTADO: aguardando pagamento ──────────────────────────────────────────
   Widget _buildPaying(
     Color cardBg, Color titleColor, Color subColor, Color borderColor, bool isDark) {
-    final expired = _remaining.isNegative;
     return ListView(
       physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
       padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
@@ -285,83 +285,91 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
                 ),
                 child: Column(
                   children: [
+                    // QR fixo: provider criado 1x no initState + gapless,
+                    // nunca pisca mesmo quando o resto rebuilda.
                     SizedBox(
                       width: 232,
                       height: 232,
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          Builder(
-                            builder: (_) {
-                              final qr = _qrImage();
-                              if (qr == null) {
-                                return const CircularProgressIndicator(
-                                  color: Color(0xFF059669),
-                                );
-                              }
-                              return Container(
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(16),
-                                ),
-                                child: Image(image: qr, width: 212, height: 212),
-                              );
-                            },
-                          ),
-                        ],
-                      ),
+                      child: _qrProvider == null
+                          ? const Center(
+                              child: CircularProgressIndicator(
+                                color: Color(0xFF059669),
+                              ),
+                            )
+                          : Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                              child: Image(
+                                image: _qrProvider!,
+                                width: 212,
+                                height: 212,
+                                gaplessPlayback: true,
+                              ),
+                            ),
                     ),
                     const SizedBox(height: 12),
-                    // Pílula de status pulsante
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: (expired ? const Color(0xFFDC2626) : const Color(0xFF059669))
-                            .withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Container(
-                            width: 9,
-                            height: 9,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: expired
-                                  ? const Color(0xFFDC2626)
-                                  : const Color(0xFF059669),
+                    // Pílula de status + cronômetro: SÓ este trecho escuta o
+                    // relógio (ValueListenableBuilder). O QR não rebuilda.
+                    ValueListenableBuilder<Duration>(
+                      valueListenable: _remainingN,
+                      builder: (_, remaining, child) {
+                        final expired = remaining.isNegative;
+                        final color = expired
+                            ? const Color(0xFFDC2626)
+                            : const Color(0xFF059669);
+                        return Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: color.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 9,
+                                    height: 9,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: color,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    expired
+                                        ? 'PIX expirado — gere um novo'
+                                        : 'Aguardando pagamento…',
+                                    style: TextStyle(
+                                      color: color,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            expired
-                                ? 'PIX expirado — gere um novo'
-                                : 'Aguardando pagamento…',
-                            style: TextStyle(
-                              color: expired
-                                  ? const Color(0xFFDC2626)
-                                  : const Color(0xFF059669),
-                              fontSize: 13,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ],
-                      ),
+                            if (!expired) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                'Expira em ${_formatRemaining(remaining)}',
+                                style: TextStyle(
+                                  color: subColor,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  fontFeatures: const [FontFeature.tabularFigures()],
+                                ),
+                              ),
+                            ],
+                          ],
+                        );
+                      },
                     ),
-                    if (!expired) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        'Expira em ${_formatRemaining()}',
-                        style: TextStyle(
-                          color: subColor,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                    ],
                   ],
                 ),
               ),
