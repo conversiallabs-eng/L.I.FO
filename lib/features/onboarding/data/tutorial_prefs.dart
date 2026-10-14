@@ -1,36 +1,40 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../presentation/screens/app_tutorial_screen.dart';
+import '../presentation/widgets/coach_tutorial.dart';
 
-/// Tutorial de primeiro login: aparece UMA vez e nunca mais enche.
-/// Versione a chave (_v1, _v2...) se um dia quiser reapresentar.
+/// Tutorial com holofote nas telas de verdade: aparece UMA vez em cada
+/// momento e nunca mais enche. Versione as chaves (_v1, _v2...) para reexibir.
 class AppTutorial {
-  static const String _kSeenKey = 'lifo_tutorial_seen_v1';
+  static const String homeSeenKey = 'lifo_coach_home_seen_v1';
+  static const String navSeenKey = 'lifo_coach_nav_seen_v1';
 
-  static Future<bool> isSeen() async {
+  static Future<bool> isSeen(String key) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      return prefs.getBool(_kSeenKey) ?? false;
+      return prefs.getBool(key) ?? false;
     } catch (_) {
       return true;
     }
   }
 
-  static Future<void> markSeen() async {
+  static Future<void> markSeen(String key) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_kSeenKey, true);
+      await prefs.setBool(key, true);
     } catch (_) {}
   }
 
-  /// Mostra o tutorial se for a primeira vez. Marca como visto mesmo se
-  /// a pessoa pular ou voltar — tutorial bom não persegue ninguém.
-  static Future<void> maybeShow(BuildContext context) async {
+  /// Mostra 1x (marca como visto mesmo se pular — tutorial bom não persegue).
+  static Future<void> showOnce(
+    BuildContext context,
+    String flag,
+    List<CoachStep> steps,
+  ) async {
     try {
-      if (await isSeen()) return;
+      if (await isSeen(flag)) return;
       if (!context.mounted) return;
-      await AppTutorialScreen.open(context);
-      await markSeen();
+      await CoachTutorial.show(context, steps);
+      await markSeen(flag);
     } catch (_) {}
   }
 }

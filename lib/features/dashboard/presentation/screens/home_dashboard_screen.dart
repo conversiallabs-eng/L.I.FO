@@ -32,7 +32,7 @@ import '../../../auth/presentation/screens/subscription_renewal_screen.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
 import '../../../auth/presentation/widgets/google_sign_in_button.dart';
 import '../../../onboarding/data/tutorial_prefs.dart';
-import '../../../onboarding/presentation/screens/app_tutorial_screen.dart';
+import '../../../onboarding/presentation/widgets/coach_tutorial.dart';
 
 class HomeDashboardScreen extends ConsumerStatefulWidget {
   const HomeDashboardScreen({super.key});
@@ -317,12 +317,90 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     );
     _mapController = MapController();
     _fetchCurrentLocation();
-    // Tutorial de primeiro login: 1x, com o mapa já assentado.
+    // Tutorial com holofote nas telas de verdade: 1x, com tudo assentado.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future.delayed(const Duration(milliseconds: 900), () {
-        if (mounted) AppTutorial.maybeShow(context);
+        if (mounted) _startHomeCoach();
       });
     });
+  }
+
+  // ─── TUTORIAL (holofote nos widgets reais) ──────────────────────────────
+  final GlobalKey _coachSearchKey = GlobalKey();
+  final GlobalKey _coachScannerKey = GlobalKey();
+  final GlobalKey _coachOptionsKey = GlobalKey();
+  final GlobalKey _coachDrawerKey = GlobalKey();
+  final GlobalKey _coachArrowKey = GlobalKey();
+  final GlobalKey _coachSpeakerKey = GlobalKey();
+  final GlobalKey _coachHudKey = GlobalKey();
+  final GlobalKey _coachCardKey = GlobalKey();
+
+  Future<void> _startHomeCoach({bool force = false}) async {
+    if (!mounted) return;
+    if (!force && await AppTutorial.isSeen(AppTutorial.homeSeenKey)) return;
+    if (!mounted) return;
+    await AppTutorial.showOnce(context, AppTutorial.homeSeenKey, [
+      CoachStep(
+        targetKey: _coachSearchKey,
+        title: 'Busque endereço ou etiqueta',
+        body:
+            'Digite um endereço para adicionar parada rapidinho — ou um código de barras para achar o pacote e a parada dele no ato.',
+      ),
+      CoachStep(
+        targetKey: _coachScannerKey,
+        title: 'Bipe a carga pela câmera',
+        body:
+            'Aponta para a etiqueta e o app marca o volume como carregado, mostrando a parada e a posição dele no baú.',
+      ),
+      CoachStep(
+        targetKey: _coachOptionsKey,
+        title: 'Aqui mora tudo: ⋯',
+        body:
+            'Importar Manifesto (CSV, Excel, Shopee, ML, Amazon), Carregar Veículo na ordem LIFO, Versões da Rota que nunca se perdem e Otimizar a partir do GPS.',
+      ),
+      CoachStep(
+        targetKey: _coachDrawerKey,
+        title: 'Menu da conta',
+        body:
+            'Minha Conta, assinatura via PIX, sair da conta — e o “?” abre a ajuda e este tutorial de novo.',
+      ),
+      CoachStep(
+        targetKey: _coachArrowKey,
+        title: 'Seta azul = câmera grudada',
+        body:
+            'Com ela azul, a câmera anda nas costas do cursor. Arrastou o mapa? Ela volta sozinha em segundos.',
+      ),
+    ]);
+  }
+
+  Future<void> _startNavCoach() async {
+    if (!mounted) return;
+    if (await AppTutorial.isSeen(AppTutorial.navSeenKey)) return;
+    // Garante o HUD visível para apontar o holofote nele.
+    _showManeuverHud(resetTimer: false);
+    await Future.delayed(const Duration(milliseconds: 1200), () {});
+    if (!mounted) return;
+    await AppTutorial.showOnce(context, AppTutorial.navSeenKey, [
+      CoachStep(
+        targetKey: _coachHudKey,
+        title: 'O HUD canta a curva',
+        body:
+            'Aqui aparece a próxima manobra com a distância real de rua. Ele some sozinho e volta em manobra nova.',
+      ),
+      CoachStep(
+        targetKey: _coachSpeakerKey,
+        title: 'Voz do GPS',
+        body:
+            'Azul = falando as curvas. Cortado = mudo. A voz avisa de longe e em cima de cada manobra.',
+      ),
+      CoachStep(
+        targetKey: _coachCardKey,
+        title: 'Card arrastável',
+        body:
+            'Arraste o card para o lado para trocar de parada. Os botões concluem, pulam ou reabrem a entrega.',
+      ),
+    ]);
+    if (mounted) _showManeuverHud();
   }
 
   /// Animação de transição de câmera suave para posição, zoom e rotação.
@@ -1688,6 +1766,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     _showManeuverHud();
     // A voz abre junto com a rota (não espera a 1ª manobra chegar a 300 m).
     _speakRouteOpening(stop);
+    // Tutorial da navegação (holofote): 1x na primeira rota.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _startNavCoach();
+    });
 
     final alreadyNavigating = _isNavigating;
 
@@ -1852,10 +1934,13 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildFloatingCircleButton(
-                        context: context,
-                        icon: Icons.menu,
-                        onTap: () => _scaffoldKey.currentState?.openDrawer(),
+                      Container(
+                        key: _coachDrawerKey,
+                        child: _buildFloatingCircleButton(
+                          context: context,
+                          icon: Icons.menu,
+                          onTap: () => _scaffoldKey.currentState?.openDrawer(),
+                        ),
                       ),
 
                       if (_isNavigating && targetStop != null)
@@ -1878,7 +1963,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                                       durationMs: 600,
                                     );
                                   },
-                                  child: _buildManeuverHud(targetStop: targetStop),
+                                  child: Container(
+                                    key: _coachHudKey,
+                                    child: _buildManeuverHud(targetStop: targetStop),
+                                  ),
                                 ),
                               ),
                             ),
@@ -1891,16 +1979,19 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           if (_isNavigating) ...[
-                            _buildFloatingCircleButton(
-                              context: context,
-                              icon: _voiceMuted
-                                  ? Icons.volume_off_rounded
-                                  : Icons.volume_up_rounded,
-                              tooltip: _voiceMuted
-                                  ? 'Ativar voz do GPS'
-                                  : 'Silenciar voz do GPS',
-                              isActive: !_voiceMuted,
-                              onTap: _toggleVoiceMuted,
+                            Container(
+                              key: _coachSpeakerKey,
+                              child: _buildFloatingCircleButton(
+                                context: context,
+                                icon: _voiceMuted
+                                    ? Icons.volume_off_rounded
+                                    : Icons.volume_up_rounded,
+                                tooltip: _voiceMuted
+                                    ? 'Ativar voz do GPS'
+                                    : 'Silenciar voz do GPS',
+                                isActive: !_voiceMuted,
+                                onTap: _toggleVoiceMuted,
+                              ),
                             ),
                             const SizedBox(height: 10),
                           ],
@@ -1929,14 +2020,17 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                             onTap: () => _onGpsButtonPressed(stops),
                           ),
                           const SizedBox(height: 10),
-                          _buildFloatingCircleButton(
-                            context: context,
-                            icon: Icons.navigation,
-                            tooltip: _autoRecenterArmed
-                                ? 'Recentralizar automático LIGADO (fica azul p/ sempre — toque p/ desligar)'
-                                : 'Recentralizar automático: câmera atrás do cursor',
-                            isActive: _autoRecenterArmed,
-                            onTap: _toggleCourseUp,
+                          Container(
+                            key: _coachArrowKey,
+                            child: _buildFloatingCircleButton(
+                              context: context,
+                              icon: Icons.navigation,
+                              tooltip: _autoRecenterArmed
+                                  ? 'Recentralizar automático LIGADO (fica azul p/ sempre — toque p/ desligar)'
+                                  : 'Recentralizar automático: câmera atrás do cursor',
+                              isActive: _autoRecenterArmed,
+                              onTap: _toggleCourseUp,
+                            ),
                           ),
                           if (_currentLocation != null) ...[
                             const SizedBox(height: 10),
@@ -1953,6 +2047,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
             // 3. NAVEGAÇÃO ATIVA: Card fixo com animação de deslize lateral e feedback sonoro/tátil
             if (_isNavigating && stops.isNotEmpty)
               Positioned(
+                key: _coachCardKey,
                 left: 14,
                 right: 14,
                 bottom: 12 + MediaQuery.of(context).padding.bottom,
@@ -2396,6 +2491,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
 
           // Search bar com autocomplete interativo (estilo Circuit / Google Maps)
           Container(
+            key: _coachSearchKey,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
             decoration: BoxDecoration(
               color: inputBg,
@@ -2451,11 +2547,13 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                   ),
                 ],
                 IconButton(
+                  key: _coachScannerKey,
                   tooltip: 'Scanner de Carga',
                   icon: const Icon(Icons.qr_code_scanner, color: AppColors.circuitBlueGlow, size: 22),
                   onPressed: _openScanner,
                 ),
                 IconButton(
+                  key: _coachOptionsKey,
                   tooltip: 'Mais opções',
                   icon: Icon(Icons.more_vert, color: subColor, size: 20),
                   onPressed: () => _openOptionsMenu(context, isDark, stops),
@@ -3893,7 +3991,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
           TextButton(
             onPressed: () {
               Navigator.pop(dCtx);
-              AppTutorialScreen.open(ctx);
+              _startHomeCoach(force: true);
             },
             child: const Text('Ver tutorial', style: TextStyle(color: Color(0xFF2563EB), fontWeight: FontWeight.w700)),
           ),
