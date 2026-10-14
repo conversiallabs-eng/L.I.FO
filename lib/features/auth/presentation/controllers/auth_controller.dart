@@ -12,12 +12,14 @@ const String _kUserPrefKey = 'lifo_user_profile';
 class AuthState {
   final UserProfile user;
   final bool isLoading;
+  final bool isBooting;
   final String? errorMessage;
   final String? successMessage;
 
   const AuthState({
     required this.user,
     this.isLoading = false,
+    this.isBooting = false,
     this.errorMessage,
     this.successMessage,
   });
@@ -25,12 +27,14 @@ class AuthState {
   AuthState copyWith({
     UserProfile? user,
     bool? isLoading,
+    bool? isBooting,
     String? errorMessage,
     String? successMessage,
   }) {
     return AuthState(
       user: user ?? this.user,
       isLoading: isLoading ?? this.isLoading,
+      isBooting: isBooting ?? this.isBooting,
       errorMessage: errorMessage,
       successMessage: successMessage,
     );
@@ -50,7 +54,7 @@ UserProfile _guestProfile() => UserProfile(
 
 class AuthController extends StateNotifier<AuthState> {
   AuthController()
-      : super(AuthState(user: _guestProfile())) {
+      : super(AuthState(user: _guestProfile(), isBooting: true)) {
     _loadProfile();
   }
 
@@ -58,14 +62,28 @@ class AuthController extends StateNotifier<AuthState> {
 
   Future<void> _loadProfile() async {
     try {
-      // 1. Prioridade: Supabase Auth — verifica sessão ativa
-      final supaUser = SupabaseService.instance.currentUser;
+      // 1. Prioridade: Supabase Auth — aguarda a recuperação da sessão
+      // (no cold start o Supabase restaura o token do storage de forma
+      // assíncrona; sem essa espera o app cai no login toda vez).
+      var supaUser = SupabaseService.instance.currentUser;
+      if (supaUser == null) {
+        // Tenta renovar sessão expirada com o refresh token salvo
+        supaUser = await SupabaseService.instance.refreshSession();
+      }
+      if (supaUser == null) {
+        for (var i = 0;
+            i < 10 && SupabaseService.instance.currentUser == null;
+            i++) {
+          await Future.delayed(const Duration(milliseconds: 200));
+        }
+        supaUser = SupabaseService.instance.currentUser;
+      }
       if (supaUser != null) {
         // Busca perfil remoto no Supabase
         final remoteProfile = await SupabaseService.instance.fetchUserProfile();
         if (remoteProfile != null) {
           await AppDatabase.instance.saveUserProfile(remoteProfile);
-          state = state.copyWith(user: remoteProfile);
+          state = state.copyWith(user: remoteProfile, isBooting: false);
           return;
         }
       }
@@ -73,7 +91,7 @@ class AuthController extends StateNotifier<AuthState> {
       // 2. Fallback: SQLite local
       final dbUser = await AppDatabase.instance.getUserProfile();
       if (dbUser != null && dbUser.isLoggedIn) {
-        state = state.copyWith(user: dbUser);
+        state = state.copyWith(user: dbUser, isBooting: false);
         return;
       }
 
@@ -84,11 +102,13 @@ class AuthController extends StateNotifier<AuthState> {
         final map = jsonDecode(raw) as Map<String, dynamic>;
         final profile = UserProfile.fromMap(map);
         if (profile.isLoggedIn) {
-          state = state.copyWith(user: profile);
+          state = state.copyWith(user: profile, isBooting: false);
           await AppDatabase.instance.saveUserProfile(profile);
+          return;
         }
       }
     } catch (_) {}
+    state = state.copyWith(isBooting: false);
   }
 
   // ─── PERSISTÊNCIA LOCAL + REMOTA ─────────────────────────────────────────
@@ -350,8 +370,9 @@ class AuthController extends StateNotifier<AuthState> {
   Future<void> logout() async {
     HapticFeedback.lightImpact();
 
-    // Desloga no Supabase
+    // Desloga no Supabase e no Google
     await SupabaseService.instance.signOut();
+    await GoogleAuthService.instance.signOut();
 
     // Limpa sessão local
     final guest = _guestProfile();

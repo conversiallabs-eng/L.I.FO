@@ -90,7 +90,9 @@ class AsaasPaymentService {
                 'Asaas recusou a cobrança (HTTP ${res.status}).';
           }
         } catch (e) {
-          lastError = '$e';
+          // functions.invoke lança exceção em HTTP != 2xx; o corpo do erro
+          // (com o motivo real do Asaas) vem em details.
+          lastError = _extractFunctionError(e);
           debugPrint('Supabase Edge Function Asaas falhou: $e');
         }
       } else {
@@ -130,6 +132,30 @@ class AsaasPaymentService {
     }
 
     throw Exception(lastError ?? 'Não foi possível gerar a cobrança PIX.');
+  }
+
+  /// Extrai a mensagem real de erro de uma exceção do functions.invoke
+  /// (o corpo da resposta vem em `details`, que pode ser Map ou String).
+  String _extractFunctionError(Object e) {
+    try {
+      final dynamic d = e;
+      final details = d.details;
+      if (details is Map) {
+        final err = details['error'];
+        if (err != null) return err.toString();
+      } else if (details is String && details.isNotEmpty) {
+        try {
+          final map = jsonDecode(details) as Map<String, dynamic>;
+          final err = map['error'];
+          if (err != null) return err.toString();
+        } catch (_) {
+          return details;
+        }
+      }
+      final status = d.status;
+      if (status != null) return 'Asaas recusou a cobrança (HTTP $status).';
+    } catch (_) {}
+    return e.toString();
   }
 
   /// Consulta o status da cobrança PIX no Asaas

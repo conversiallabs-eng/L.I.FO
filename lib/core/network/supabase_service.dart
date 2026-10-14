@@ -87,6 +87,18 @@ class SupabaseService {
     } catch (_) {}
   }
 
+  /// Tenta renovar a sessão com o refresh token salvo (cold start com
+  /// access token expirado). Retorna o [User] ou null se não há sessão.
+  Future<User?> refreshSession() async {
+    if (!_isInitialized) return null;
+    try {
+      final response = await _client.auth.refreshSession();
+      return response.user;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Envia e-mail de recuperação de senha.
   Future<bool> resetPassword(String email) async {
     if (!_isInitialized) return false;

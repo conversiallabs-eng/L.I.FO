@@ -45,15 +45,52 @@ class LifoApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final authState = ref.watch(authControllerProvider);
 
+    Widget home;
+    if (authState.isBooting) {
+      home = const _BootSplash();
+    } else {
+      home = authState.user.isLoggedIn
+          ? const HomeDashboardScreen()
+          : const LoginScreen();
+    }
+
     return MaterialApp(
       title: 'Lifo - Otimizador Logistico',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system,
-      home: authState.user.isLoggedIn
-          ? const HomeDashboardScreen()
-          : const LoginScreen(),
+      home: home,
+    );
+  }
+}
+
+/// Splash exibido enquanto a sessão salva é restaurada (sem flash de login).
+class _BootSplash extends StatelessWidget {
+  const _BootSplash();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Color(0xFF0066FF),
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'L.I.F.O.',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 44,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 2,
+              ),
+            ),
+            SizedBox(height: 16),
+            CircularProgressIndicator(color: Colors.white),
+          ],
+        ),
+      ),
     );
   }
 }
