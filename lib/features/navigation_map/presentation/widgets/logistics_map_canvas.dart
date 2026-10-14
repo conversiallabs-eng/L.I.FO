@@ -58,12 +58,12 @@ class LogisticsMapCanvas extends StatelessWidget {
   });
 
   // Tiles 100% sem API key (CARTO passou a exigir key desde 25/09/2026).
-  // - Light: ESRI World Street Map (COLORIDO estilo iFood/Google: ruas,
-  //   parques, água e labels vibrantes — inclui rótulos, sem overlay extra).
+  // - Light: OSM Standard (estilo Google/iFood: fundo claro neutro, água
+  //   azul, parques verdes, vias em amarelo/laranja — sem o bege-deserto).
   // - Dark: ESRI Canvas Dark Gray Base + Reference (grafite, combina com a UI).
   // - Satellite: ESRI World Imagery.
-  static const String _esriStreets =
-      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}';
+  static const String _osmStandard =
+      'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
   static const String _esriDarkBase =
       'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}';
   static const String _esriDarkRef =
@@ -290,9 +290,9 @@ class LogisticsMapCanvas extends StatelessWidget {
                   errorTileCallback: (tile, error, stackTrace) {},
                 ),
               ] else ...[
-                // Rua colorida (1 camada só: rótulos já vêm no tile).
+                // Rua estilo OSM (1 camada só: rótulos já vêm no tile).
                 TileLayer(
-                  urlTemplate: _esriStreets,
+                  urlTemplate: _osmStandard,
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
                   retinaMode: false,
@@ -407,7 +407,9 @@ class LogisticsMapCanvas extends StatelessWidget {
             child: Text(
               isSatellite
                   ? '© Esri, Maxar, Earthstar Geographics'
-                  : '© Esri, HERE, Garmin, © OpenStreetMap',
+                  : (isDark
+                      ? '© Esri, © OpenStreetMap'
+                      : '© OpenStreetMap contributors'),
               style: const TextStyle(
                 color: Colors.white70,
                 fontSize: 9,

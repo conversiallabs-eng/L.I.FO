@@ -84,7 +84,7 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
             children: [
               // Tiles sem API key + cache em disco (sem retina simulada nas
               // camadas com rótulo: ela encolhe os nomes das ruas à metade).
-              // noturno = ESRI Dark Gray, claro = ESRI Street Map (colorido).
+              // noturno = ESRI Dark Gray, claro = OSM Standard (estilo Google).
               if (isCabinNight) ...[
                 TileLayer(
                   urlTemplate:
@@ -111,7 +111,7 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
               ] else ...[
                 TileLayer(
                   urlTemplate:
-                      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
                   maxZoom: 18,
