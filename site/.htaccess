@@ -1,0 +1,13 @@
+# L.I.F.O. — cache correto por tipo (evita página velha presa em proxy).
+# Tudo dentro de <IfModule>: se o módulo não existir, ignora sem erro 500.
+<IfModule mod_headers.c>
+  # HTML sempre revalidado: página nova aparece na hora, sem limpar cache.
+  <FilesMatch "\.(html|htm)$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+  # APK estável valida antes de reusar: não baixa 79MB à toa, mas nunca
+  # entrega versão velha depois de um release novo.
+  <FilesMatch "\.(apk)$">
+    Header set Cache-Control "public, must-revalidate"
+  </FilesMatch>
+</IfModule>
