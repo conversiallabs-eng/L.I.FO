@@ -7,6 +7,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+import '../../../../core/layout/map_split_layout.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/models/route_step.dart';
 import '../../../../core/utils/lifo_calculator.dart';
@@ -17,7 +18,6 @@ import '../../../route_manifest/presentation/manifest_controller.dart';
 import '../../../cargo_scanner/presentation/screens/cargo_scanner_screen.dart';
 import '../../../vehicle_load/presentation/screens/vehicle_bay_screen.dart';
 import '../../../vehicle_load/data/slot_names.dart';
-import '../../../route_manifest/presentation/screens/manifest_versions_screen.dart';
 import '../../../route_manifest/presentation/screens/add_stop_sheet.dart';
 import '../../../route_manifest/presentation/screens/import_manifest_sheet.dart';
 import '../../../route_manifest/presentation/screens/import_success_dialog.dart';
@@ -35,6 +35,10 @@ import '../../../auth/presentation/screens/login_screen.dart';
 import '../../../auth/presentation/widgets/google_sign_in_button.dart';
 import '../../../onboarding/data/tutorial_prefs.dart';
 import '../../../onboarding/presentation/widgets/coach_tutorial.dart';
+import '../../../offline_maps/presentation/screens/offline_maps_screen.dart';
+import '../../../../core/services/offline_map_service.dart';
+import '../../../../core/network/connectivity_service.dart';
+import '../../../../core/network/net_guard.dart';
 
 class HomeDashboardScreen extends ConsumerStatefulWidget {
   const HomeDashboardScreen({super.key});
@@ -48,15 +52,34 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   late final MapController _mapController;
   final Set<String> _expandedGroupIds = {};
   final Set<String> _collapsedGroupIds = {};
-  // Controle livre de altura do card (0.20 colapsado, 0.44 intermediário, 0.94 tela cheia)
+  // Card com PISO DINÂMICO = altura exata do cabeçalho fixo (handle +
+  // busca + eta + título + botão ≈ 232px): pode levantar até a tela cheia
+  // (0.94), mas nunca desce a ponto de cortar o botão Iniciar/Continuar.
+  // Pedido de uso em campo. Fração = px / altura da tela (qualquer aparelho).
+  static const double _sheetHeaderPx = 232.0;
+  // Estado vazio (sem manifesto): ícone + textos + 2 botões ≈ 340px.
+  static const double _sheetEmptyPx = 344.0;
+  static const double _sheetMaxExtent = 0.94;
   double _sheetExtent = 0.44;
+  bool _sheetTouched = false;
+  // Altura de referência do conteúdo atual (cheio = com rota, vazio = vazio).
+  // Atualizada a cada build, antes de qualquer gesto.
+  double _sheetFloorPx = _sheetHeaderPx;
+
+  /// Menor altura permitida, em fração da tela: conteúdo fixo inteiro
+  /// visível (com rota = cabeçalho + botão; vazio = os 2 botões).
+  double _sheetFloor() {
+    final h = MediaQuery.of(context).size.height;
+    if (h <= 0) return 0.44;
+    return ((_sheetFloorPx + 4) / h).clamp(0.28, 0.62);
+  }
   late final ValueNotifier<double> _sheetExtentNotifier = ValueNotifier<double>(_sheetExtent);
   late final AnimationController _sheetAnimationController;
   Animation<double>? _sheetAnimation;
 
   void _animateSheetTo(double targetExtent) {
     if (!mounted) return;
-    targetExtent = targetExtent.clamp(0.20, 0.94);
+    targetExtent = targetExtent.clamp(_sheetFloor(), _sheetMaxExtent);
     _sheetAnimation = Tween<double>(
       begin: _sheetExtent,
       end: targetExtent,
@@ -68,33 +91,31 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   }
 
   void _onSheetDragUpdate(DragUpdateDetails details) {
+    _sheetTouched = true;
     final screenHeight = MediaQuery.of(context).size.height;
     if (screenHeight <= 0) return;
     final delta = -details.delta.dy / screenHeight;
-    _sheetExtent = (_sheetExtent + delta).clamp(0.20, 0.94);
+    _sheetExtent =
+        (_sheetExtent + delta).clamp(_sheetFloor(), _sheetMaxExtent);
     _sheetExtentNotifier.value = _sheetExtent;
   }
 
   void _onSheetDragEnd(DragEndDetails details) {
+    final floor = _sheetFloor();
     final velocity = details.primaryVelocity ?? 0;
-    double target = 0.44;
+    double target = floor;
     if (velocity < -250) {
-      target = 0.94;
+      target = _sheetMaxExtent;
     } else if (velocity > 250) {
-      target = _sheetExtent > 0.60 ? 0.44 : 0.20;
+      target = floor;
     } else {
-      if (_sheetExtent > 0.68) {
-        target = 0.94;
-      } else if (_sheetExtent > 0.32) {
-        target = 0.44;
-      } else {
-        target = 0.20;
-      }
+      target = _sheetExtent > 0.68 ? _sheetMaxExtent : floor;
     }
     _animateSheetTo(target);
   }
 
   void _toggleSheetSize() {
+    _sheetTouched = true;
     if (_sheetExtent > 0.60) {
       _animateSheetTo(0.44);
     } else {
@@ -112,6 +133,27 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   bool _isSatelliteLayer = false;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   LatLng? _currentLocation;
+
+  // ── GPS granular (Fase 1a perf): o stream atualiza estes notifiers a
+  // cada fix SEM setState na tela. Só pin do mapa, HUD e pílula de
+  // velocidade ouvem (subárvores minúsculas); lista/marcadores/polyline
+  // só rebuildam em mudança de dado (rota, status, seleção).
+  final ValueNotifier<LatLng?> _livePin = ValueNotifier<LatLng?>(null);
+  final ValueNotifier<double?> _liveHeading = ValueNotifier<double?>(null);
+  final ValueNotifier<int> _gpsTick = ValueNotifier<int>(0);
+
+  /// Publica um fix de GPS: atualiza campos + notifica ouvintes granulares.
+  /// Não dá setState — quem precisa de rebuild total chama por conta própria.
+  void _publishGpsFix(LatLng pos, {double? speedKmh, double? heading}) {
+    _currentLocation = pos;
+    if (speedKmh != null) _speedKmh = speedKmh;
+    if (heading != null && heading >= 0 && heading <= 360) {
+      _heading = heading;
+    }
+    _livePin.value = pos;
+    if (_heading != null) _liveHeading.value = _heading;
+    _gpsTick.value++;
+  }
 
   void _animateCardDragTo(
     double targetDx, {
@@ -292,13 +334,30 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   // Voz do GPS (alto-falante da pilha lateral). Fala 1x de longe (300 m)
   // e 1x em cima (80 m) por manobra — sem repetir a cada fix.
   bool _voiceMuted = false;
+
+  /// Paisagem: os controles do mapa ficam atrás de um botão só, porque a coluna
+  /// vertical não cabe na altura deitada. Em retrato fica sempre falso.
   String _announcedFarKey = '';
   String _announcedNearKey = '';
   String _announcedArriveStopId = '';
 
+  /// NÃO TRAVAR A ORIENTAÇÃO — app inteiro livre (retrato + paisagem).
+  /// NÃO reintroduzir trava portrait-only aqui nem no main.dart.
+  static const List<DeviceOrientation> _landscapeAllowed = [
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
+  ];
+
+  // NÃO TRAVAR A ORIENTAÇÃO — _portraitOnly removido de propósito.
+  // Manter o app livre; não recriar essa lista.
+
   @override
   void initState() {
     super.initState();
+    // NÃO TRAVAR A ORIENTAÇÃO — app livre; sem retorno a portrait no dispose.
+    SystemChrome.setPreferredOrientations(_landscapeAllowed);
     _routesScrollController = ScrollController();
     _sheetAnimationController = AnimationController(
       vsync: this,
@@ -319,11 +378,38 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     );
     _mapController = MapController();
     _fetchCurrentLocation();
+    // Card começa no piso (cabeçalho + botão inteiros, sem lista): o
+    // usuário levanta se quiser. Só na 1ª montagem e sem toque anterior.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _sheetTouched) return;
+      _sheetExtent = _sheetFloor();
+      _sheetExtentNotifier.value = _sheetExtent;
+    });
+    // Expirado trava no PIX (confiança ou pagamento). Vale no boot e se
+    // a assinatura vencer com o app aberto.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _maybeLockExpiredOnPix();
+    });
     // Tutorial com holofote nas telas de verdade: 1x, com tudo assentado.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Future.delayed(const Duration(milliseconds: 900), () {
         if (mounted) _startHomeCoach();
       });
+    });
+  }
+
+  bool _graceLockOpened = false;
+
+  /// Expirado + logado → renovação travada (sem voltar). O botão de
+  /// confiança aparece dentro dela só para quem pode tomar.
+  void _maybeLockExpiredOnPix() {
+    if (_graceLockOpened || !mounted) return;
+    final auth = ref.read(authControllerProvider);
+    if (!auth.user.isLoggedIn) return;
+    if (auth.user.expiresAt.isAfter(DateTime.now())) return;
+    _graceLockOpened = true;
+    Future.delayed(const Duration(milliseconds: 600), () {
+      if (mounted) SubscriptionRenewalScreen.openLocked(context);
     });
   }
 
@@ -540,10 +626,19 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     }
   }
 
-  /// Garante que a rota seja automaticamente re-otimizada a partir da localização do entregador
+  /// Garante que a rota seja automaticamente re-otimizada a partir da localização do entregador.
+  /// Offline pula (reotimizar sem OSRM não muda a ordem e ainda aposentaria
+  /// a versão com a rua salva, apagando a linha do mapa).
   void _checkAndAutoReoptimize(LatLng latLng) {
     if (_didAutoReoptimize) return;
+    if (!ConnectivityService.instance.isOnline.value) return;
     final manifestState = ref.read(manifestControllerProvider);
+    // Já otimizada com GPS antes? Não cria "Otimizada N+1" à toa — era
+    // isso que empilhava Otimizada 2..8 sozinho a cada boot.
+    if (manifestState.hasGpsStart) {
+      _didAutoReoptimize = true;
+      return;
+    }
     final stops = manifestState.currentVersion?.stops ?? [];
     if (stops.length > 1) {
       _didAutoReoptimize = true;
@@ -578,9 +673,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       final lastPos = await Geolocator.getLastKnownPosition();
       if (lastPos != null && mounted) {
         final lastLatLng = LatLng(lastPos.latitude, lastPos.longitude);
-        setState(() {
-          _currentLocation = lastLatLng;
-        });
+        _publishGpsFix(lastLatLng);
         if (_followGps && !_isAnimatingCamera) {
           if (_isNavigating) {
             final course = _getForwardCourse();
@@ -603,13 +696,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
 
       if (!mounted) return;
       final latLng = LatLng(pos.latitude, pos.longitude);
-      setState(() {
-        _currentLocation = latLng;
-        if (pos.heading >= 0 && pos.heading <= 360) {
-          _heading = pos.heading;
-        }
-        _speedKmh = pos.speed * 3.6;
-      });
+      _publishGpsFix(latLng, speedKmh: pos.speed * 3.6, heading: pos.heading);
       if (_followGps && !_isAnimatingCamera) {
         if (_isNavigating) {
           final course = _getForwardCourse();
@@ -637,13 +724,8 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       ).listen((p) {
         if (!mounted) return;
         final next = LatLng(p.latitude, p.longitude);
-        setState(() {
-          _currentLocation = next;
-          _speedKmh = p.speed * 3.6;
-          if (p.heading >= 0 && p.heading <= 360) {
-            _heading = p.heading;
-          }
-        });
+        // Sem setState: pin/HUD/velocidade ouvem os notifiers (Fase 1a).
+        _publishGpsFix(next, speedKmh: p.speed * 3.6, heading: p.heading);
         if (_followGps) {
           // Não interrompe animações em andamento
           if (_isAnimatingCamera || _mapAnimationController.isAnimating) return;
@@ -706,6 +788,11 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     _sheetAnimationController.dispose();
     _sheetExtentNotifier.dispose();
     _routesScrollController.dispose();
+    _livePin.dispose();
+    _liveHeading.dispose();
+    _gpsTick.dispose();
+    // NÃO TRAVAR A ORIENTAÇÃO — mantém livre ao sair da tela; não voltar a portraitOnly.
+    SystemChrome.setPreferredOrientations(_landscapeAllowed);
     super.dispose();
   }
 
@@ -986,14 +1073,6 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     );
   }
 
-  void _openAuditModal() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const ManifestVersionsScreen(),
-      ),
-    );
-  }
-
   void _openOptionsMenu(BuildContext ctx, bool isDark, List<DeliveryStop> stops) {
     final bg = isDark ? const Color(0xFF0F172A) : Colors.white;
     final textColor = isDark ? Colors.white : const Color(0xFF0F172A);
@@ -1074,12 +1153,15 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                 ),
                 Divider(height: 1, color: divColor),
                 _optionTile(
-                  icon: Icons.history,
-                  label: 'Versões da Rota',
-                  subtitle: 'Histórico e snapshots do manifesto',
+                  icon: Icons.map_outlined,
+                  label: 'Mapas offline',
+                  subtitle: 'Baixa a cidade para usar sem internet',
                   textColor: textColor,
                   subColor: subColor,
-                  onTap: () { Navigator.pop(ctx); _openAuditModal(); },
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    OfflineMapsScreen.open(context);
+                  },
                 ),
               ],
             ),
@@ -1144,6 +1226,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     );
     if (baseline != null && mounted) {
       _fitToCurrentManifest();
+      // F4 silencioso: com internet, baixa o entorno da rota em background
+      // (cidade atual + pedacinho da vizinha). Sem rede, só pula.
+      // ignore: unawaited_futures
+      _ensureOfflineCoverage();
 
       // ── Pede o nome da rota ─────────────────────────────────────────────
       // Respiro p/ a sheet terminar de sair antes do dialog entrar (sem corte).
@@ -1188,20 +1274,17 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       final s = ref.read(manifestControllerProvider);
       final v = s.currentVersion;
       if (v != null && mounted) {
-        // Par comparável: rua x rua quando há rede nos dois lados;
-        // senão linha reta x linha reta (sempre mostra alguma economia real).
+        // Comparativo honesto: rua x rua quando há rede nos dois lados.
+        // Offline (qualquer lado sem geometria de rua): zera e o dialog
+        // mostra "—" / "sem estimativa" — nunca número de linha reta.
         double cmpOriginal;
         double cmpOptimized;
         if (baseline.originalRoad > 0 && s.totalDistanceMeters > 0) {
           cmpOriginal = baseline.originalRoad;
           cmpOptimized = s.totalDistanceMeters;
         } else {
-          cmpOriginal = baseline.originalHav;
-          cmpOptimized = LifoCalculator.pathLength(
-            v.stops,
-            startLat: baseline.startLat,
-            startLng: baseline.startLng,
-          );
+          cmpOriginal = 0;
+          cmpOptimized = 0;
         }
         final viewOnMap = await ImportSuccessDialog.show(
           context,
@@ -1240,6 +1323,24 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     });
   }
 
+  /// F4: garante tiles offline do bbox da rota + 2km, em background.
+  /// Só com internet e sem download concorrente; falha silenciosa.
+  Future<void> _ensureOfflineCoverage() async {
+    try {
+      if (!ConnectivityService.instance.isOnline.value) return;
+      final stops =
+          ref.read(manifestControllerProvider).currentVersion?.stops ?? [];
+      if (stops.isEmpty) return;
+      final points = [
+        for (final s in stops) LatLng(s.latitude, s.longitude),
+      ];
+      // Roda sem await na chamada; aqui só executa e solta.
+      unawaited(
+        OfflineMapService.instance.ensureRouteCoverage(points),
+      );
+    } catch (_) {}
+  }
+
   Future<void> _onGpsButtonPressed(List<DeliveryStop> stops) async {
     setState(() {
       _followGps = true;
@@ -1258,10 +1359,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       );
       if (!mounted) return;
       final latLng = LatLng(pos.latitude, pos.longitude);
-      setState(() {
-        _currentLocation = latLng;
-        _speedKmh = pos.speed * 3.6;
-      });
+      _publishGpsFix(latLng, speedKmh: pos.speed * 3.6);
       _mapController.move(latLng, 16.0);
     } catch (_) {
       if (_currentLocation != null) {
@@ -1283,7 +1381,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         ),
       );
       final fix = LatLng(pos.latitude, pos.longitude);
-      if (mounted) setState(() => _currentLocation = fix);
+      if (mounted) _publishGpsFix(fix);
       return fix;
     } catch (_) {
       if (_currentLocation != null) return _currentLocation;
@@ -1291,7 +1389,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         final last = await Geolocator.getLastKnownPosition();
         if (last != null) {
           final fix = LatLng(last.latitude, last.longitude);
-          if (mounted) setState(() => _currentLocation = fix);
+          if (mounted) _publishGpsFix(fix);
           return fix;
         }
       } catch (_) {}
@@ -1300,6 +1398,18 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   }
 
   Future<void> _reoptimizeWithGps() async {
+    // Offline, otimizar não muda a ordem (sem OSRM) e o controller recusa
+    // criar versão vazia para não aposentar a rua salva — avisa e mantém.
+    if (!ConnectivityService.instance.isOnline.value &&
+        await isOfflineFast()) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sem internet: mantendo a ordem atual e o traçado salvo.'),
+        ),
+      );
+      return;
+    }
     final start = await _ensureRouteStart();
     if (!mounted) return;
     if (start == null) {
@@ -1346,8 +1456,36 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     return (radians * 180.0 / pi + 360.0) % 360.0;
   }
 
+  // ── Throttle do course (Fase 2a perf): a varredura completa da polyline
+  // com haversine por ponto é cara p/ rodar a 1-3Hz. Reaproveita por até
+  // 1,2s enquanto o veículo andar <25m (a câmera anima de todo jeito).
+  int _lastCourseMs = 0;
+  LatLng? _lastCoursePos;
+  double _cachedCourse = 0.0;
+
   /// Obtém o azimute geográfico (0-360°) para onde a frente do veículo / rua à frente está apontando.
   double _getForwardCourse() {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final cur = _currentLocation;
+    if (cur != null &&
+        _lastCoursePos != null &&
+        nowMs - _lastCourseMs < 1200) {
+      final moved = LifoCalculator.calculateDistanceMeters(
+        cur.latitude,
+        cur.longitude,
+        _lastCoursePos!.latitude,
+        _lastCoursePos!.longitude,
+      );
+      if (moved < 25) return _cachedCourse;
+    }
+    final course = _computeForwardCourse();
+    _lastCourseMs = nowMs;
+    _lastCoursePos = cur;
+    _cachedCourse = course;
+    return course;
+  }
+
+  double _computeForwardCourse() {
     // 1. Se em movimento (velocidade > 1.2 km/h) ou com heading de bússola válido
     if (_heading != null && _heading! >= 0 && _heading! <= 360) {
       if (_speedKmh > 1.2) {
@@ -1491,8 +1629,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         });
         _showManeuverHud();
       } else {
+        // Sem traçado de rua: sem linha — nunca reta.
         setState(() {
-          _legPolyline = [from, targetPoint];
+          _legPolyline = [];
           _legSteps = [];
           _legStepIndices = [];
           _legCumMeters = [];
@@ -1503,7 +1642,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     } catch (_) {
       if (mounted) {
         setState(() {
-          _legPolyline = [from, targetPoint];
+          _legPolyline = [];
           _legSteps = [];
           _legStepIndices = [];
           _legCumMeters = [];
@@ -1639,16 +1778,14 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   }
 
   /// Exibe o HUD por alguns segundos e some, como no Waze.
+  /// HUD persistente durante a navegação: em vez de sumir após 6s, ele dá
+  /// lugar ao nome da rua atual (pedido de uso em campo). Só apaga ao sair
+  /// da navegação (ver [_resetNavigationState]).
   void _showManeuverHud({bool resetTimer = true}) {
     if (!mounted) return;
     _hudHideTimer?.cancel();
     if (!_hudVisible) {
       setState(() => _hudVisible = true);
-    }
-    if (resetTimer) {
-      _hudHideTimer = Timer(const Duration(seconds: 6), () {
-        if (mounted) setState(() => _hudVisible = false);
-      });
     }
   }
 
@@ -1811,6 +1948,15 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       }
     });
 
+    // Assinatura venceu com o app aberto → trava no PIX.
+    ref.listen(authControllerProvider, (prev, next) {
+      final wasOk = (prev?.user.isLoggedIn ?? false) &&
+          prev!.user.expiresAt.isAfter(DateTime.now());
+      final isBad = next.user.isLoggedIn &&
+          !next.user.expiresAt.isAfter(DateTime.now());
+      if (wasOk && isBad && mounted) _maybeLockExpiredOnPix();
+    });
+
     ref.listen<ManifestState>(manifestControllerProvider, (prev, next) {
       if (!_didAutoReoptimize &&
           _currentLocation != null &&
@@ -1823,6 +1969,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     final manifestState = ref.watch(manifestControllerProvider);
     final currentVersion = manifestState.currentVersion;
     final stops = currentVersion?.stops ?? [];
+    // Piso do card acompanha o conteúdo: vazio precisa de mais altura
+    // (2 botões) para nada cortar.
+    _sheetFloorPx = stops.isEmpty ? _sheetEmptyPx : _sheetHeaderPx;
 
     final LatLng defaultCenter = stops.isNotEmpty
         ? LatLng(stops.first.latitude, stops.first.longitude)
@@ -1838,19 +1987,18 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       });
     }
 
-    // Quando navegando: desenha EXCLUSIVAMENTE o caminho até a próxima parada!
-    final List<LatLng> fallbackRoutePoints = stops.map((s) => LatLng(s.latitude, s.longitude)).toList();
+    // SEMPRE geometria de rua ou nada — nunca reta.
+    // Navegando: perna GPS→parada quando há traçado de rua dela; senão a
+    // rua salva inteira (o canvas realça o trecho até a parada ativa).
+    // Offline sem rua salva: só marcadores + tiles até a rede voltar.
     final List<LatLng> effectivePolyline;
     if (_isNavigating && targetStop != null && _currentLocation != null) {
-      if (_legPolyline.isNotEmpty && _lastLegTargetStopId == targetStop.id) {
-        effectivePolyline = _legPolyline;
-      } else {
-        effectivePolyline = [_currentLocation!, LatLng(targetStop.latitude, targetStop.longitude)];
-      }
+      effectivePolyline =
+          (_legPolyline.isNotEmpty && _lastLegTargetStopId == targetStop.id)
+              ? _legPolyline
+              : manifestState.roadPolyline;
     } else {
-      effectivePolyline = manifestState.roadPolyline.isNotEmpty
-          ? manifestState.roadPolyline
-          : fallbackRoutePoints;
+      effectivePolyline = manifestState.roadPolyline;
     }
 
     final mapMarkers = stops.asMap().entries.map((entry) {
@@ -1868,6 +2016,69 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
 
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
 
+    // Paisagem: painel fixo à esquerda (parada ou lista) e mapa à direita — Circuit.
+    final media = MediaQuery.of(context);
+    // Largura > altura: evita card de retrato embaixo do mapa quando o aparelho está deitado.
+    final bool isLandscape = media.size.width > media.size.height;
+    final bool splitPanel =
+        MapSplitLayout.showsSidePanel(isLandscape: isLandscape);
+    final double panelWidth =
+        splitPanel ? MapSplitLayout.panelWidth(media.size.width) : 0.0;
+
+    // Controles do mapa — os mesmos nas duas orientações: empilhados na vertical
+    // em retrato, numa faixa horizontal em paisagem (que abre e fecha).
+    final List<Widget> mapControlButtons = [
+      if (_isNavigating)
+        Container(
+          key: _coachSpeakerKey,
+          child: _buildFloatingCircleButton(
+            context: context,
+            icon: _voiceMuted
+                ? Icons.volume_off_rounded
+                : Icons.volume_up_rounded,
+            tooltip: _voiceMuted
+                ? 'Ativar voz do GPS'
+                : 'Silenciar voz do GPS',
+            isActive: !_voiceMuted,
+            onTap: _toggleVoiceMuted,
+          ),
+        ),
+      _buildFloatingCircleButton(
+        context: context,
+        icon: Icons.alt_route,
+        tooltip: 'Re-otimizar Rota LIFO',
+        onTap: _reoptimizeWithGps,
+      ),
+      _buildFloatingCircleButton(
+        context: context,
+        icon: _isSatelliteLayer ? Icons.map : Icons.layers_outlined,
+        tooltip: 'Alternar Camada',
+        onTap: () {
+          setState(() {
+            _isSatelliteLayer = !_isSatelliteLayer;
+          });
+        },
+      ),
+      _buildFloatingCircleButton(
+        context: context,
+        icon: Icons.my_location,
+        tooltip: 'Minha Localização GPS',
+        onTap: () => _onGpsButtonPressed(stops),
+      ),
+      Container(
+        key: _coachArrowKey,
+        child: _buildFloatingCircleButton(
+          context: context,
+          icon: Icons.navigation,
+          tooltip: _autoRecenterArmed
+              ? 'Recentralizar automático LIGADO (fica azul p/ sempre — toque p/ desligar)'
+              : 'Recentralizar automático: câmera atrás do cursor',
+          isActive: _autoRecenterArmed,
+          onTap: _toggleCourseUp,
+        ),
+      ),
+    ];
+
     return Scaffold(
       key: _scaffoldKey,
       backgroundColor: Theme.of(context).scaffoldBackgroundColor,
@@ -1876,8 +2087,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         child: Stack(
           fit: StackFit.expand,
           children: [
-            // 1. ISOLATED LOGISTICS MAP CANVAS (Ocupa SEMPRE 100% da tela)
+            // 1. ISOLATED LOGISTICS MAP CANVAS (em paisagem divide a tela com o
+            // painel de paradas durante a visão geral; na navegação ocupa a tela cheia)
             Positioned.fill(
+              left: (_isNavigating && stops.isNotEmpty) ? 0.0 : panelWidth,
               child: RepaintBoundary(
                 child: LogisticsMapCanvas(
                   mapController: _mapController,
@@ -1889,6 +2102,8 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                   isDark: isDark,
                   currentLocationPin: _currentLocation,
                   headingDegrees: _heading,
+                  livePin: _livePin,
+                  liveHeading: _liveHeading,
                   isNavigating: _isNavigating,
                   onUserInteraction: _onMapUserInteracted,
                   onMapReady: () {
@@ -1918,10 +2133,27 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
               ),
             ),
 
-            // 2. TOP FLOATING CONTROLS (Ancorados no topo com Positioned)
+            // 2. SELO OFFLINE (F5): mostra quando sem rede ou em sessão local.
+            // Não bloqueia nada — scanner/baú/entrega seguem 100% locais.
             Positioned(
               top: 0,
-              left: 0,
+              left: (_isNavigating && stops.isNotEmpty) ? 0.0 : panelWidth,
+              right: 0,
+              child: SafeArea(
+                child: Center(
+                  child: _OfflineBadge(
+                    isOfflineAuth:
+                        ref.watch(authControllerProvider).isOffline,
+                  ),
+                ),
+              ),
+            ),
+
+            // 3. TOP FLOATING CONTROLS (Ancorados no topo com Positioned e
+            // limitados à largura do mapa quando o painel lateral está visível)
+            Positioned(
+              top: 0,
+              left: (_isNavigating && stops.isNotEmpty) ? 0.0 : panelWidth,
               right: 0,
               child: SafeArea(
                 child: Padding(
@@ -1960,7 +2192,14 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                                   },
                                   child: Container(
                                     key: _coachHudKey,
-                                    child: _buildManeuverHud(targetStop: targetStop),
+                                    // Fase 1a: texto do HUD (distância) atualiza
+                                    // por fix sem rebuild da tela.
+                                    child: ValueListenableBuilder<int>(
+                                      valueListenable: _gpsTick,
+                                      builder: (context, _, _) =>
+                                          _buildManeuverHud(
+                                              targetStop: targetStop),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -1970,67 +2209,23 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                       else
                         const Spacer(),
 
+                      // Controles do mapa sempre visíveis, empilhados na vertical
+                      // (retrato e paisagem).
                       Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (_isNavigating) ...[
-                            Container(
-                              key: _coachSpeakerKey,
-                              child: _buildFloatingCircleButton(
-                                context: context,
-                                icon: _voiceMuted
-                                    ? Icons.volume_off_rounded
-                                    : Icons.volume_up_rounded,
-                                tooltip: _voiceMuted
-                                    ? 'Ativar voz do GPS'
-                                    : 'Silenciar voz do GPS',
-                                isActive: !_voiceMuted,
-                                onTap: _toggleVoiceMuted,
-                              ),
-                            ),
+                          for (final botao in mapControlButtons) ...[
+                            botao,
                             const SizedBox(height: 10),
                           ],
-                          _buildFloatingCircleButton(
-                            context: context,
-                            icon: Icons.alt_route,
-                            tooltip: 'Re-otimizar Rota LIFO',
-                            onTap: _reoptimizeWithGps,
+                          // Fase 1a: pílula ouve o fix (aparece no 1º fix
+                          // sem rebuild da tela).
+                          ValueListenableBuilder<LatLng?>(
+                            valueListenable: _livePin,
+                            builder: (context, pin, _) => pin == null
+                                ? const SizedBox.shrink()
+                                : _buildSpeedPill(context),
                           ),
-                          const SizedBox(height: 10),
-                          _buildFloatingCircleButton(
-                            context: context,
-                            icon: _isSatelliteLayer ? Icons.map : Icons.layers_outlined,
-                            tooltip: 'Alternar Camada',
-                            onTap: () {
-                              setState(() {
-                                _isSatelliteLayer = !_isSatelliteLayer;
-                              });
-                            },
-                          ),
-                          const SizedBox(height: 10),
-                          _buildFloatingCircleButton(
-                            context: context,
-                            icon: Icons.my_location,
-                            tooltip: 'Minha Localização GPS',
-                            onTap: () => _onGpsButtonPressed(stops),
-                          ),
-                          const SizedBox(height: 10),
-                          Container(
-                            key: _coachArrowKey,
-                            child: _buildFloatingCircleButton(
-                              context: context,
-                              icon: Icons.navigation,
-                              tooltip: _autoRecenterArmed
-                                  ? 'Recentralizar automático LIGADO (fica azul p/ sempre — toque p/ desligar)'
-                                  : 'Recentralizar automático: câmera atrás do cursor',
-                              isActive: _autoRecenterArmed,
-                              onTap: _toggleCourseUp,
-                            ),
-                          ),
-                          if (_currentLocation != null) ...[
-                            const SizedBox(height: 10),
-                            _buildSpeedPill(context),
-                          ],
                         ],
                       ),
                     ],
@@ -2039,13 +2234,14 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
               ),
             ),
 
-            // 3. NAVEGAÇÃO ATIVA: Card fixo com animação de deslize lateral e feedback sonoro/tátil
+            // 3. NAVEGAÇÃO ATIVA — Card flutuante e arrastável em retrato e paisagem (compacto no modo horizontal).
             if (_isNavigating && stops.isNotEmpty)
               Positioned(
                 key: _coachCardKey,
-                left: 14,
-                right: 14,
-                bottom: 12 + MediaQuery.of(context).padding.bottom,
+                left: isLandscape ? 16 : 14,
+                right: isLandscape ? null : 14,
+                width: isLandscape ? (media.size.width * 0.42).clamp(310.0, 360.0) : null,
+                bottom: 12 + media.padding.bottom,
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onHorizontalDragStart: (_) {
@@ -2072,6 +2268,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                       angle: (_cardDragDx / 3200).clamp(-0.05, 0.05),
                       child: _buildActiveNavigationCard(
                         isDark: isDark,
+                        isSidePanel: false,
                         stop: stops[_selectedStopIndex.clamp(0, stops.length - 1)],
                         currentIndex: _selectedStopIndex.clamp(0, stops.length - 1),
                         totalStops: stops.length,
@@ -2093,11 +2290,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                             } else if (nextIdx < curIdx) {
                               _goToPreviousStop(stops);
                             } else {
-                              // Botão Navegar → sempre forçar câmera nas costas do cursor
                               _startInAppNavigation(stops[nextIdx], forceFollow: true);
                             }
                           } else {
-                            // Botão Navegar → sempre forçar câmera nas costas do cursor
                             _startInAppNavigation(curStop, forceFollow: true);
                           }
                         },
@@ -2192,8 +2387,30 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                   ),
                 ),
               )
-            else
-              // 3. MODO VISÃO GERAL: Bottom sheet interativo com altura controlável e lista independente
+            // Visão geral em paisagem: lista de paradas no painel esquerdo; retrato: bottom sheet.
+            else if (splitPanel)
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: panelWidth,
+                child: RepaintBoundary(
+                  child: _buildCircuitBottomSheet(
+                    context: context,
+                    isSidePanel: true,
+                    currentVersion: currentVersion,
+                    stops: stops,
+                    isOnlineRouting: manifestState.isOnlineRouting,
+                    totalDurationSeconds: manifestState.totalDurationSeconds,
+                    totalDistanceMeters: manifestState.totalDistanceMeters,
+                    hasRoadPolyline:
+                        manifestState.roadPolyline.isNotEmpty,
+                    arrivalOffsets: manifestState.arrivalOffsets,
+                    routeComputedAt: manifestState.routeComputedAt,
+                  ),
+                ),
+              )
+            else if (!_isNavigating || stops.isEmpty)
               Positioned(
                 left: 0,
                 right: 0,
@@ -2213,6 +2430,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                       stops: stops,
                       isOnlineRouting: manifestState.isOnlineRouting,
                       totalDurationSeconds: manifestState.totalDurationSeconds,
+                      totalDistanceMeters: manifestState.totalDistanceMeters,
+                      hasRoadPolyline:
+                          manifestState.roadPolyline.isNotEmpty,
                       arrivalOffsets: manifestState.arrivalOffsets,
                       routeComputedAt: manifestState.routeComputedAt,
                     ),
@@ -2305,10 +2525,14 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
 
   Widget _buildCircuitBottomSheet({
     required BuildContext context,
+    /// Em paisagem o painel fica na lateral: cantos, sombra e alça mudam.
+    bool isSidePanel = false,
     required dynamic currentVersion,
     required List<DeliveryStop> stops,
     required bool isOnlineRouting,
     required double totalDurationSeconds,
+    required double totalDistanceMeters,
+    required bool hasRoadPolyline,
     required List<double> arrivalOffsets,
     required DateTime? routeComputedAt,
   }) {
@@ -2335,17 +2559,24 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     final subColor = isDark ? AppColors.textSlate : AppColors.lightTextSecondary;
     final mutedColor = isDark ? AppColors.textMuted : AppColors.lightTextMuted;
 
+    // Painel lateral à esquerda (paisagem): cantos arredondados à direita.
+    final BorderRadius sheetRadius = isSidePanel
+        ? const BorderRadius.horizontal(right: Radius.circular(24))
+        : const BorderRadius.vertical(top: Radius.circular(24));
+    final Offset sheetShadowOffset =
+        isSidePanel ? const Offset(6, 0) : const Offset(0, -6);
+
     if (currentVersion == null || stops.isEmpty) {
       return Container(
         decoration: BoxDecoration(
           color: sheetBg,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+          borderRadius: sheetRadius,
           border: Border.all(color: sheetBorder, width: 1.2),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: isDark ? 0.7 : 0.18),
               blurRadius: 20,
-              offset: const Offset(0, -6),
+              offset: sheetShadowOffset,
             ),
           ],
         ),
@@ -2357,23 +2588,26 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
             physics: const NeverScrollableScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
             children: [
-              Center(
-                child: GestureDetector(
-                  onTap: _toggleSheetSize,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 30),
-                    color: Colors.transparent,
+              // No painel lateral a lista ocupa a altura toda: não há altura
+              // para arrastar, então a alça some.
+              if (!isSidePanel)
+                Center(
+                  child: GestureDetector(
+                    onTap: _toggleSheetSize,
                     child: Container(
-                      width: 38,
-                      height: 4.5,
-                      decoration: BoxDecoration(
-                        color: sheetBorder,
-                        borderRadius: BorderRadius.circular(3),
+                      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 30),
+                      color: Colors.transparent,
+                      child: Container(
+                        width: 38,
+                        height: 4.5,
+                        decoration: BoxDecoration(
+                          color: sheetBorder,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
               const SizedBox(height: 24),
               const Icon(Icons.local_shipping_outlined, size: 48, color: AppColors.circuitBlueGlow),
               const SizedBox(height: 12),
@@ -2410,9 +2644,13 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
 
     final bool hasRealEta =
         isOnlineRouting && totalDurationSeconds > 0 && routeComputedAt != null;
+    final bool hasStoredRoad =
+        totalDistanceMeters > 0 && hasRoadPolyline;
     final String etaLine = hasRealEta
-        ? 'Chegada ≈ ${DateFormat('HH:mm').format(routeComputedAt.add(Duration(seconds: totalDurationSeconds.round())))} • $totalStops paradas$weightSuffix'
-        : '$totalStops paradas$weightSuffix • cálculo local';
+        ? 'Chegada ≈ ${_hhmmFormat.format(routeComputedAt.add(Duration(seconds: totalDurationSeconds.round())))} • $totalStops paradas$weightSuffix'
+        : hasStoredRoad
+            ? '$totalStops paradas$weightSuffix • ${(totalDistanceMeters / 1000).toStringAsFixed(1)} km de rua'
+            : '$totalStops paradas$weightSuffix • aguardando conexão';
 
     final nextIdx = _nextPendingIndex(stops);
     final isRouteInProgress = stops.any((s) => s.status == StopStatus.completed || s.status == StopStatus.inTransit);
@@ -2423,6 +2661,25 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         : isRouteInProgress
             ? 'Continuar ${nextIdx + 1}/${stops.length}'
             : 'Iniciar Rota';
+
+    // Ação única do botão de rota — usada tanto no layout de retrato (botão
+    // grande de largura toda) quanto no compacto de paisagem (botão embutido
+    // na linha de resumo).
+    void startRoute() {
+      if (allCompleted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text('Todas as entregas deste manifesto já foram concluídas!'),
+            backgroundColor: AppColors.circuitGreen,
+          ),
+        );
+        return;
+      }
+      final idx = _nextPendingIndex(stops);
+      setState(() => _selectedStopIndex = idx);
+      _startInAppNavigation(stops[idx], forceFollow: true);
+    }
 
     // Dispara auto-scroll para a parada atual quando a rota estiver em andamento
     if (stops.isNotEmpty && isRouteInProgress && _lastAutoScrolledIndex != nextIdx) {
@@ -2435,21 +2692,26 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     return Container(
       decoration: BoxDecoration(
         color: sheetBg,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: sheetRadius,
         border: Border.all(color: sheetBorder, width: 1.2),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: isDark ? 0.7 : 0.18),
             blurRadius: 20,
-            offset: const Offset(0, -6),
+            offset: sheetShadowOffset,
           ),
         ],
       ),
       clipBehavior: Clip.antiAlias,
       child: LayoutBuilder(
         builder: (ctx, constraints) {
-          // Altura natural máxima do cabeçalho (handle + busca + eta + título + botão + label)
-          const double headerNatH = 232.0;
+          // Altura natural máxima do cabeçalho (handle + busca + eta + título + botão + label).
+          // Em paisagem o painel é estreito e comprido: com o cabeçalho
+          // compacto (resumo + botão numa linha só) a lista de paradas ganha a
+          // altura que antes ia embora. Com resultado de busca na tela o
+          // cabeçalho precisa do espaço completo.
+          final double headerNatH =
+              isSidePanel ? (_packageSearchHit != null ? 232.0 : 140.0) : 232.0;
           final double availH = constraints.maxHeight;
           // Cabeçalho: no máximo headerNatH, no mínimo 0 (quando card minúsculo)
           final double headerH = availH.clamp(0.0, headerNatH);
@@ -2474,23 +2736,24 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Center(
-                    child: GestureDetector(
-                      onTap: _toggleSheetSize,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 30),
-                        color: Colors.transparent,
+                  if (!isSidePanel)
+                    Center(
+                      child: GestureDetector(
+                        onTap: _toggleSheetSize,
                         child: Container(
-                          width: 38,
-                          height: 4.5,
-                          decoration: BoxDecoration(
-                            color: sheetBorder,
-                            borderRadius: BorderRadius.circular(3),
+                          padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 30),
+                          color: Colors.transparent,
+                          child: Container(
+                            width: 38,
+                            height: 4.5,
+                            decoration: BoxDecoration(
+                              color: sheetBorder,
+                              borderRadius: BorderRadius.circular(3),
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
                   const SizedBox(height: 8),
 
 
@@ -2832,87 +3095,161 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
             ),
           ],
 
-          const SizedBox(height: 14),
-
-          Text(
-            etaLine,
-            style: TextStyle(
-              color: subColor,
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 4),
-
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  currentVersion?.label.toUpperCase() ?? 'MANIFESTO OPERACIONAL',
-                  style: TextStyle(
-                    color: titleColor,
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.3,
+          if (isSidePanel) ...[
+            // Layout deitado: resumo e botão de rota na MESMA linha, para a
+            // lista de paradas ficar com o resto da altura do painel.
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        currentVersion?.label.toUpperCase() ??
+                            'MANIFESTO OPERACIONAL',
+                        style: TextStyle(
+                          color: titleColor,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.2,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        etaLine,
+                        style: TextStyle(
+                          color: subColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                   ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
                 ),
+                const SizedBox(width: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppColors.circuitBlue.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '$loadedCount/$totalCount',
+                    style: const TextStyle(
+                      color: AppColors.circuitBlueGlow,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                if (stops.isNotEmpty && !_isNavigating) ...[
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: startRoute,
+                    icon: const Icon(Icons.navigation_rounded, size: 16),
+                    label: Text(
+                      allCompleted ? 'Concluída' : 'Ir',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2563EB),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      minimumSize: const Size(0, 38),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ] else ...[
+            const SizedBox(height: 14),
+
+            Text(
+              etaLine,
+              style: TextStyle(
+                color: subColor,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: AppColors.circuitBlue.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(6),
+            ),
+            const SizedBox(height: 4),
+
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    currentVersion?.label.toUpperCase() ??
+                        'MANIFESTO OPERACIONAL',
+                    style: TextStyle(
+                      color: titleColor,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.3,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-                child: Text(
-                  '$loadedCount/$totalCount BIPADOS',
-                  style: const TextStyle(
-                    color: AppColors.circuitBlueGlow,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: AppColors.circuitBlue.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    '$loadedCount/$totalCount BIPADOS',
+                    style: const TextStyle(
+                      color: AppColors.circuitBlueGlow,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            // Botão de Ação Rápida: Iniciar Rota ou Continuar x/y
+            if (stops.isNotEmpty && !_isNavigating) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: startRoute,
+                  icon: const Icon(Icons.navigation_rounded, size: 18),
+                  label: Text(
+                    buttonLabel,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF2563EB),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    minimumSize: const Size(double.infinity, 46),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                 ),
               ),
             ],
-          ),
-                  // Botão de Ação Rápida: Iniciar Rota ou Continuar x/y
-                  if (stops.isNotEmpty && !_isNavigating) ...[
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          if (allCompleted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Todas as entregas deste manifesto já foram concluídas!'),
-                                backgroundColor: AppColors.circuitGreen,
-                              ),
-                            );
-                            return;
-                          }
-                          final idx = _nextPendingIndex(stops);
-                          setState(() => _selectedStopIndex = idx);
-                          _startInAppNavigation(stops[idx], forceFollow: true);
-                        },
-                        icon: const Icon(Icons.navigation_rounded, size: 18),
-                        label: Text(
-                          buttonLabel,
-                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF2563EB),
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          minimumSize: const Size(double.infinity, 46),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+          ],
 
                   const SizedBox(height: 10),
 
@@ -3000,7 +3337,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                         _mapController.rotate(0);
                       } catch (_) {}
                       _mapController.move(LatLng(stops[i].latitude, stops[i].longitude), 15.0);
-                      _animateSheetTo(0.28);
+                      _animateSheetTo(_sheetFloor());
                     },
                     onRemove: () => _confirmRemoveStop(stops[i]),
                   ),
@@ -3082,6 +3419,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     );
   }
 
+  // Fase 2b perf: construir DateFormat parseia o padrão (ICU) — 1x só.
+  static final _hhmmFormat = DateFormat('HH:mm');
+
   String _stopTimeLabel({
     required int index,
     required DeliveryStop stop,
@@ -3094,7 +3434,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         arrivalOffsets.length > index) {
       final eta = routeComputedAt
           .add(Duration(seconds: arrivalOffsets[index].round()));
-      return DateFormat('HH:mm').format(eta);
+      return _hhmmFormat.format(eta);
     }
     return '#${stop.sequenceIndex}';
   }
@@ -3281,10 +3621,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                         child: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                           decoration: BoxDecoration(
-                            color: isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9),
+                            color: isDark ? AppColors.carbonSurfaceInput : AppColors.lightSurfaceInput,
                             borderRadius: BorderRadius.circular(6),
                             border: Border.all(
-                              color: isDark ? const Color(0xFF334155) : const Color(0xFFCBD5E1),
+                              color: isDark ? AppColors.carbonBorder : AppColors.lightBorder,
                               width: 1,
                             ),
                           ),
@@ -3368,17 +3708,24 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       );
   }
 
+  /// Rua atual pelo progresso na perna (ver [LifoCalculator.streetAtProgress]).
+  String? _currentStreetName() => LifoCalculator.streetAtProgress(
+        _legSteps,
+        _legStepIndices,
+        _legClosestIdx,
+      );
+
   /// HUD de navegação superior estilo Waze (na cor azul).
-  /// Exibe dados reais da parada alvo (número, destinatário, endereço e distância GPS).
-  /// Aparece temporariamente ao iniciar ou aproximar e some com fade suave.
-  /// HUD estilo Waze: próxima manobra (curva/rotatória/rua) + distância
-  /// REAL de rua até a parada. Sem steps (offline), cai no fallback de destino.
+  /// Persistente durante a navegação: manobra próxima assume; fora disso
+  /// mostra a rua atual em vez de sumir. Sem steps (offline), destino.
   Widget _buildManeuverHud({DeliveryStop? targetStop}) {
     if (targetStop == null) return const SizedBox.shrink();
 
     final maneuver = _currentManeuver();
 
-    // Distância de rua restante (ou linha reta no fallback offline).
+    // Rua restante (dado de rua) ou "~" + distância GPS aproximada quando
+    // não há traçado (offline sem rua salva). O "~" deixa claro que não é
+    // medição de rua — nenhuma linha é desenhada a partir desse número.
     String distanceText = '';
     if (maneuver != null && _legRemainingMeters >= 0) {
       distanceText = _formatRoadDistance(_legRemainingMeters);
@@ -3389,7 +3736,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         targetStop.latitude,
         targetStop.longitude,
       );
-      distanceText = _formatRoadDistance(meters);
+      distanceText = '~${_formatRoadDistance(meters)}';
     }
 
     // Linha principal e secundária do HUD.
@@ -3397,8 +3744,17 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     String mainLine = targetStop.recipientName;
     String? subLine =
         targetStop.address.isNotEmpty ? targetStop.address : null;
-    if (maneuver != null) {
-      final step = maneuver.step;
+    final street = _currentStreetName();
+    // Manobra próxima (≤300 m, mesmo limiar da voz de longe) assume o HUD;
+    // fora disso o HUD mostra a rua atual em vez de sumir. Sem rua (offline
+    // sem perna), cai no destino como antes.
+    final nearManeuver = (maneuver != null &&
+            (maneuver.metersTo <= 300 ||
+                maneuver.step.maneuver == ManeuverType.arrive))
+        ? maneuver
+        : null;
+    if (nearManeuver != null) {
+      final step = nearManeuver.step;
       icon = step.icon;
       final arriving = step.maneuver == ManeuverType.arrive &&
           _legRemainingMeters >= 0 &&
@@ -3408,12 +3764,20 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         subLine = targetStop.address.isNotEmpty ? targetStop.address : null;
       } else {
         mainLine = step.label;
-        final toManeuver = _formatRoadDistance(maneuver.metersTo);
+        final toManeuver = _formatRoadDistance(nearManeuver.metersTo);
         subLine = step.streetName.isNotEmpty
             ? '${step.streetName} • em $toManeuver'
             : 'em $toManeuver';
       }
+    } else if (street != null && street.isNotEmpty) {
+      // Modo rua: nome em destaque. Sem parada, sem km.
+      icon = Icons.add_road;
+      mainLine = street;
+      subLine = null;
     }
+    // Rua em destaque: rótulo pequeno em cima + nome grande.
+    final streetMode =
+        nearManeuver == null && street != null && street.isNotEmpty;
 
     return Container(
       constraints: const BoxConstraints(minHeight: 46),
@@ -3455,10 +3819,11 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Text(
-                      'PARADA #${targetStop.sequenceIndex}',
+                if (!streetMode)
+                  Row(
+                    children: [
+                      Text(
+                        'PARADA #${targetStop.sequenceIndex}',
                       style: const TextStyle(
                         color: Color(0xFFBFDBFE),
                         fontSize: 10,
@@ -3486,12 +3851,21 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                     ],
                   ],
                 ),
-                const SizedBox(height: 1),
+                if (streetMode)
+                  const Text(
+                    'VOCÊ ESTÁ EM',
+                    style: TextStyle(
+                      color: Color(0xFFBFDBFE),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.6,
+                    ),
+                  ),
                 Text(
                   mainLine,
-                  style: const TextStyle(
+                  style: TextStyle(
                     color: Colors.white,
-                    fontSize: 12.5,
+                    fontSize: streetMode ? 16.5 : 12.5,
                     fontWeight: FontWeight.w800,
                   ),
                   maxLines: 1,
@@ -3518,8 +3892,148 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     );
   }
 
+  Widget _buildNavigationCardDetails({
+    required bool isDark,
+    required bool isSidePanel,
+    required DeliveryStop stop,
+    required Color titleColor,
+    required Color subColor,
+    required Color cardBorder,
+    required String? notes,
+  }) {
+    final barcodes = stop.packages
+        .map((p) => p.barcode.trim())
+        .where((b) => b.isNotEmpty)
+        .toList();
+    final trackingLabel = barcodes.isNotEmpty
+        ? barcodes.join(' • ')
+        : 'ID #${stop.sequenceIndex} (Sem código vinculado)';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          stop.recipientName,
+          style: TextStyle(
+            color: titleColor,
+            fontSize: isSidePanel ? 17 : 15,
+            fontWeight: FontWeight.w800,
+          ),
+          maxLines: isSidePanel ? 3 : 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          stop.address,
+          style: TextStyle(
+            color: subColor,
+            fontSize: isSidePanel ? 13 : 12,
+            height: 1.35,
+          ),
+        ),
+        Container(
+          width: double.infinity,
+          margin: const EdgeInsets.only(top: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: cardBorder, width: 1),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.qr_code_2_rounded,
+                size: 17,
+                color: isDark ? const Color(0xFF60A5FA) : const Color(0xFF2563EB),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'RASTREIO:',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w900,
+                  color: subColor,
+                  letterSpacing: 0.6,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  trackingLabel,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                    fontFamily: 'monospace',
+                    color: titleColor,
+                    letterSpacing: 0.5,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (stop.packages.length > 1)
+                Container(
+                  margin: const EdgeInsets.only(left: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2563EB).withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '${stop.packages.length} vols',
+                    style: const TextStyle(
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF3B82F6),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        _buildStopLocationChip(isDark: isDark, stop: stop),
+        if (notes != null && notes.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: cardBorder),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.article_outlined,
+                  size: 13,
+                  color: isDark ? AppColors.circuitBlueGlow : AppColors.circuitBlue,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    notes,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: isDark ? AppColors.textSlate : AppColors.lightTextSecondary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+        if (!isSidePanel) const SizedBox(height: 10),
+      ],
+    );
+  }
+
   Widget _buildActiveNavigationCard({
     required bool isDark,
+    bool isSidePanel = false,
     required DeliveryStop stop,
     required int currentIndex,
     required int totalStops,
@@ -3532,33 +4046,54 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     required VoidCallback onUndo,
     required VoidCallback onClose,
   }) {
+    final theme = Theme.of(context);
     final titleColor = isDark ? AppColors.textWhite : AppColors.lightTextPrimary;
     final subColor = isDark ? AppColors.textSlate : AppColors.lightTextSecondary;
-    final cardBg = isDark ? AppColors.carbonSurface : AppColors.lightSurfaceElevated;
+    final cardBg = isSidePanel
+        ? theme.scaffoldBackgroundColor
+        : (isDark ? AppColors.carbonSurface : AppColors.lightSurfaceElevated);
     final cardBorder = isDark ? AppColors.carbonBorder : AppColors.lightBorder;
     final notes = stop.notes?.trim();
     final isFinalized = stop.status == StopStatus.completed || stop.status == StopStatus.failed;
 
     return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: cardBg,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: AppColors.circuitBlueGlow.withValues(alpha: 0.6),
-          width: 1.5,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.circuitBlue.withValues(alpha: isDark ? 0.25 : 0.12),
-            blurRadius: 16,
-            offset: const Offset(0, 4),
-          ),
-        ],
+      width: isSidePanel ? double.infinity : null,
+      height: isSidePanel ? double.infinity : null,
+      padding: EdgeInsets.fromLTRB(
+        isSidePanel ? 16 : 12,
+        isSidePanel ? 12 : 10,
+        isSidePanel ? 16 : 12,
+        isSidePanel ? 16 : 10,
       ),
+      decoration: isSidePanel
+          ? BoxDecoration(
+              color: cardBg,
+              border: Border(
+                right: BorderSide(
+                  color: theme.dividerColor.withValues(alpha: 0.35),
+                  width: 1,
+                ),
+              ),
+            )
+          : BoxDecoration(
+              color: cardBg,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: AppColors.circuitBlueGlow.withValues(alpha: 0.6),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: AppColors.circuitBlue.withValues(alpha: isDark ? 0.25 : 0.12),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment:
+            isSidePanel ? CrossAxisAlignment.stretch : CrossAxisAlignment.start,
+        mainAxisSize: isSidePanel ? MainAxisSize.max : MainAxisSize.min,
         children: [
           // Top Row: Status dot + Sequence/ETA + Close button
           Row(
@@ -3576,7 +4111,8 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                 ),
               ),
               const SizedBox(width: 8),
-              Text(
+              Flexible(
+                child: Text(
                 '${currentIndex + 1}/$totalStops, $timeLabel',
                 style: TextStyle(
                   color: titleColor,
@@ -3584,32 +4120,35 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                   fontWeight: FontWeight.w800,
                   letterSpacing: 0.2,
                 ),
+                overflow: TextOverflow.ellipsis,
               ),
-              const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: stop.status == StopStatus.completed
-                      ? const Color(0xFF16A34A)
-                      : (stop.status == StopStatus.failed
-                          ? const Color(0xFFDC2626)
-                          : const Color(0xFF2563EB)),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  stop.status == StopStatus.completed
-                      ? 'ENTREGUE'
-                      : (stop.status == StopStatus.failed
-                          ? 'NÃO ENTREGUE'
-                          : 'ROTA EM ANDAMENTO'),
-                  style: const TextStyle(
-                    fontSize: 9.5,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                    letterSpacing: 0.5,
+              ),
+              if (!isSidePanel) const SizedBox(width: 6),
+              if (!isSidePanel)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: stop.status == StopStatus.completed
+                        ? const Color(0xFF16A34A)
+                        : (stop.status == StopStatus.failed
+                            ? const Color(0xFFDC2626)
+                            : const Color(0xFF2563EB)),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    stop.status == StopStatus.completed
+                        ? 'ENTREGUE'
+                        : (stop.status == StopStatus.failed
+                            ? 'NÃO ENTREGUE'
+                            : 'ROTA EM ANDAMENTO'),
+                    style: const TextStyle(
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      letterSpacing: 0.5,
+                    ),
                   ),
                 ),
-              ),
             const Spacer(),
             InkWell(
               onTap: onClose,
@@ -3621,248 +4160,126 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
             ),
           ],
         ),
+        if (isSidePanel) ...[
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: stop.status == StopStatus.completed
+                    ? const Color(0xFF16A34A)
+                    : (stop.status == StopStatus.failed
+                        ? const Color(0xFFDC2626)
+                        : const Color(0xFF2563EB)),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                stop.status == StopStatus.completed
+                    ? 'ENTREGUE'
+                    : (stop.status == StopStatus.failed
+                        ? 'NÃO ENTREGUE'
+                        : 'ROTA EM ANDAMENTO'),
+                style: const TextStyle(
+                  fontSize: 9.5,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: 8),
 
-        // Recipient & Address
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    stop.recipientName,
-                    style: TextStyle(
-                      color: titleColor,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    stop.address,
-                    style: TextStyle(
-                      color: subColor,
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
+        if (isSidePanel)
+          Expanded(
+            child: SingleChildScrollView(
+              child: _buildNavigationCardDetails(
+                isDark: isDark,
+                isSidePanel: true,
+                stop: stop,
+                titleColor: titleColor,
+                subColor: subColor,
+                cardBorder: cardBorder,
+                notes: notes,
               ),
             ),
-          ],
-        ),
+          )
+        else
+          _buildNavigationCardDetails(
+            isDark: isDark,
+            isSidePanel: false,
+            stop: stop,
+            titleColor: titleColor,
+            subColor: subColor,
+            cardBorder: cardBorder,
+            notes: notes,
+          ),
 
-        // Código de Rastreio dos Pacotes (Obrigatório e Destaque)
-        Builder(builder: (context) {
-          final barcodes = stop.packages
-              .map((p) => p.barcode.trim())
-              .where((b) => b.isNotEmpty)
-              .toList();
-          final trackingLabel = barcodes.isNotEmpty
-              ? barcodes.join(' • ')
-              : 'ID #${stop.sequenceIndex} (Sem código vinculado)';
-
-          return Container(
-            width: double.infinity,
-            margin: const EdgeInsets.only(top: 8),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: isDark ? const Color(0xFF334155) : const Color(0xFFCBD5E1),
-                width: 1.2,
-              ),
-            ),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.qr_code_2_rounded,
-                  size: 17,
-                  color: isDark ? const Color(0xFF60A5FA) : const Color(0xFF2563EB),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'RASTREIO:',
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w900,
-                    color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
-                    letterSpacing: 0.6,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    trackingLabel,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w800,
-                      fontFamily: 'monospace',
-                      color: isDark ? Colors.white : const Color(0xFF0F172A),
-                      letterSpacing: 0.5,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                if (stop.packages.length > 1)
-                  Container(
-                    margin: const EdgeInsets.only(left: 6),
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF2563EB).withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: Text(
-                      '${stop.packages.length} vols',
-                      style: const TextStyle(
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF3B82F6),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          );
-        }),
-
-          _buildStopLocationChip(isDark: isDark, stop: stop),
-
-          // Observações do manifesto (se houver)
-          if (notes != null && notes.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: isDark ? AppColors.carbonSurfaceInput : AppColors.lightSurface,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: cardBorder),
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.article_outlined,
-                    size: 13,
-                    color: isDark ? AppColors.circuitBlueGlow : AppColors.circuitBlue,
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      notes,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: isDark ? AppColors.textSlate : AppColors.lightTextSecondary,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-
+          // As Ações do Card (Layout de 2 linhas limpo e sem truncamentos)
           const SizedBox(height: 10),
-
-          // As Ações do Card
-          Row(
-            children: [
-              Expanded(
-                child: isFinalized
-                    ? _buildStopActionButton(
-                        isDark: isDark,
-                        customBg: isDark ? const Color(0xFF0F172A) : Colors.black,
-                        customBorder: isDark ? const Color(0xFF334155) : Colors.black,
-                        customTextColor: Colors.white,
-                        icon: const Icon(
-                          Icons.undo_rounded,
-                          size: 19,
-                          color: Colors.white,
-                        ),
-                        label: 'Desfazer',
-                        onTap: onUndo,
-                      )
-                    : _buildStopActionButton(
-                        isDark: isDark,
-                        isPrimary: true,
-                        icon: const Icon(
-                          Icons.navigation_rounded,
-                          size: 18,
-                          color: Colors.white,
-                        ),
-                        label: 'Navegar',
-                        onTap: onNavigate,
-                      ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: _buildStopActionButton(
-                  isDark: isDark,
-                  icon: Icon(
-                    Icons.redo_rounded,
-                    size: 19,
-                    color: isDark ? Colors.white70 : AppColors.lightTextSecondary,
-                  ),
-                  label: 'Próxima',
-                  onTap: onNext,
-                ),
-              ),
-              const SizedBox(width: 6),
-              if (isFinalized)
+          if (isFinalized) ...[
+            Row(
+              children: [
                 Expanded(
                   flex: 2,
+                  child: _buildStopActionButton(
+                    isDark: isDark,
+                    isPrimary: true,
+                    icon: const Icon(Icons.undo_rounded, size: 18, color: Colors.white),
+                    label: 'Desfazer',
+                    onTap: onUndo,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  flex: 3,
                   child: _buildStopStatusVisualizer(
                     isDark: isDark,
                     isCompleted: stop.status == StopStatus.completed,
                   ),
-                )
-              else ...[
+                ),
+              ],
+            ),
+          ] else ...[
+            Row(
+              children: [
+                Expanded(
+                  flex: 2,
+                  child: _buildStopActionButton(
+                    isDark: isDark,
+                    isPrimary: true,
+                    icon: const Icon(Icons.navigation_rounded, size: 18, color: Colors.white),
+                    label: 'Navegar',
+                    onTap: onNavigate,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _buildStopActionButton(
+                    isDark: isDark,
+                    icon: Icon(
+                      Icons.redo_rounded,
+                      size: 18,
+                      color: isDark ? Colors.white70 : AppColors.lightTextSecondary,
+                    ),
+                    label: 'Próxima',
+                    onTap: onNext,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
                 Expanded(
                   child: _buildStopActionButton(
                     isDark: isDark,
                     isSelected: stop.status == StopStatus.failed,
                     selectedColor: const Color(0xFFDC2626),
-                    icon: SizedBox(
-                      width: 22,
-                      height: 20,
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          Center(
-                            child: Icon(
-                              Icons.inventory_2_outlined,
-                              size: 19,
-                              color: isDark ? Colors.white70 : AppColors.lightTextSecondary,
-                            ),
-                          ),
-                          Positioned(
-                            right: -1,
-                            bottom: -1,
-                            child: Container(
-                              width: 10,
-                              height: 10,
-                              decoration: const BoxDecoration(
-                                color: Color(0xFFDC2626),
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Center(
-                                child: Icon(
-                                  Icons.close,
-                                  size: 7,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    label: 'Não entreg...',
+                    icon: _failedDeliveryIcon(isDark),
+                    label: 'Não entregue',
                     onTap: onMarkFailed,
                   ),
                 ),
@@ -3872,47 +4289,81 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                     isDark: isDark,
                     isSelected: stop.status == StopStatus.completed,
                     selectedColor: const Color(0xFF16A34A),
-                    icon: SizedBox(
-                      width: 22,
-                      height: 20,
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          Center(
-                            child: Icon(
-                              Icons.inventory_2_outlined,
-                              size: 19,
-                              color: isDark ? Colors.white70 : AppColors.lightTextSecondary,
-                            ),
-                          ),
-                          Positioned(
-                            right: -1,
-                            bottom: -1,
-                            child: Container(
-                              width: 10,
-                              height: 10,
-                              decoration: const BoxDecoration(
-                                color: Color(0xFF43A047),
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Center(
-                                child: Icon(
-                                  Icons.check,
-                                  size: 7,
-                                  color: Colors.white,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    icon: _deliveredIcon(isDark),
                     label: 'Entregue',
                     onTap: onMarkCompleted,
                   ),
                 ),
               ],
-            ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _failedDeliveryIcon(bool isDark) {
+    return SizedBox(
+      width: 22,
+      height: 20,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Center(
+            child: Icon(
+              Icons.inventory_2_outlined,
+              size: 19,
+              color: isDark ? Colors.white70 : AppColors.lightTextSecondary,
+            ),
+          ),
+          Positioned(
+            right: -1,
+            bottom: -1,
+            child: Container(
+              width: 10,
+              height: 10,
+              decoration: const BoxDecoration(
+                color: Color(0xFFDC2626),
+                shape: BoxShape.circle,
+              ),
+              child: const Center(
+                child: Icon(Icons.close, size: 7, color: Colors.white),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _deliveredIcon(bool isDark) {
+    return SizedBox(
+      width: 22,
+      height: 20,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Center(
+            child: Icon(
+              Icons.inventory_2_outlined,
+              size: 19,
+              color: isDark ? Colors.white70 : AppColors.lightTextSecondary,
+            ),
+          ),
+          Positioned(
+            right: -1,
+            bottom: -1,
+            child: Container(
+              width: 10,
+              height: 10,
+              decoration: const BoxDecoration(
+                color: Color(0xFF43A047),
+                shape: BoxShape.circle,
+              ),
+              child: const Center(
+                child: Icon(Icons.check, size: 7, color: Colors.white),
+              ),
+            ),
           ),
         ],
       ),
@@ -3999,27 +4450,28 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Ink(
-          height: 52,
+          height: 44,
           decoration: BoxDecoration(
             color: bg,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(color: border, width: isSelected || isPrimary ? 1.2 : 1.0),
           ),
-          child: Column(
+          child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
             children: [
               icon,
-              const SizedBox(height: 3),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: textColor,
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: textColor,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
               ),
             ],
           ),
@@ -4221,7 +4673,6 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     final manifestState = ref.watch(manifestControllerProvider);
 
     final drawerBg = isDark ? const Color(0xFF0F172A) : Colors.white;
-    final cardBg = isDark ? const Color(0xFF1E293B) : const Color(0xFFEDF4FE);
     final titleColor = isDark ? Colors.white : const Color(0xFF0F172A);
     final subColor = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
     final dividerColor = isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
@@ -4240,37 +4691,103 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     return Drawer(
       width: MediaQuery.of(context).size.width * 0.84,
       backgroundColor: drawerBg,
+      // top:false para o gradiente do hero encostar no topo da tela
+      // (atrás da status bar); o respiro vem de padding manual abaixo.
       child: SafeArea(
+        top: false,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── TOP PROFILE / ACCOUNT CARD (Estilo Circuit) ─────────────
+            // ── TOP PROFILE / ACCOUNT HERO (gradiente até o topo) ───────
             Container(
-              color: cardBg,
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              padding: EdgeInsets.fromLTRB(
+                16,
+                MediaQuery.of(context).padding.top + 10,
+                16,
+                16,
+              ),
+              clipBehavior: Clip.hardEdge,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: isDark
+                      ? const [
+                          Color(0xFF1E1B4B), // índigo profundo
+                          Color(0xFF1D4ED8), // azul circuit
+                          Color(0xFF0369A1), // ciano açoitado
+                        ]
+                      : const [
+                          Color(0xFF1E40AF), // azul royal
+                          Color(0xFF2563EB), // azul circuit
+                          Color(0xFF38BDF8), // céu claro
+                        ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: Stack(
                 children: [
-                  // Ícones de ação no topo direito: Ajuda (?) e Configurações (⚙)
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      IconButton(
-                        visualDensity: VisualDensity.compact,
-                        icon: Icon(Icons.help_outline, size: 22, color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569)),
-                        tooltip: 'Ajuda',
-                        onPressed: () => _showHelpDialog(context),
+                  // Brilhos decorativos do gradiente.
+                  Positioned(
+                    right: -46,
+                    top: -46,
+                    child: Container(
+                      width: 150,
+                      height: 150,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withValues(alpha: 0.10),
                       ),
-                      const SizedBox(width: 4),
-                      IconButton(
-                        visualDensity: VisualDensity.compact,
-                        icon: Icon(Icons.settings_outlined, size: 22, color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569)),
-                        tooltip: 'Minha Conta & Configurações',
-                        onPressed: () => MyAccountScreen.open(context),
-                      ),
-                    ],
+                    ),
                   ),
-                  const SizedBox(height: 4),
+                  Positioned(
+                    right: 44,
+                    top: 22,
+                    child: Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withValues(alpha: 0.10),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: -34,
+                    bottom: -44,
+                    child: Container(
+                      width: 110,
+                      height: 110,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withValues(alpha: 0.07),
+                      ),
+                    ),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Ícones de ação no topo direito: Ajuda (?) e Configurações (⚙)
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            icon: const Icon(Icons.help_outline,
+                                size: 22, color: Colors.white70),
+                            tooltip: 'Ajuda',
+                            onPressed: () => _showHelpDialog(context),
+                          ),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            visualDensity: VisualDensity.compact,
+                            icon: const Icon(Icons.settings_outlined,
+                                size: 22, color: Colors.white70),
+                            tooltip: 'Minha Conta & Configurações',
+                            onPressed: () => MyAccountScreen.open(context),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
 
                   // Perfil do Usuário: Avatar, Nome, E-mail e Status
                   InkWell(
@@ -4327,8 +4844,8 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                               children: [
                                 Text(
                                   user.name,
-                                  style: TextStyle(
-                                    color: titleColor,
+                                  style: const TextStyle(
+                                    color: Colors.white,
                                     fontSize: 15,
                                     fontWeight: FontWeight.w700,
                                   ),
@@ -4339,7 +4856,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                                 Text(
                                   user.email,
                                   style: TextStyle(
-                                    color: subColor,
+                                    color: Colors.white.withValues(alpha: 0.75),
                                     fontSize: 12,
                                   ),
                                   maxLines: 1,
@@ -4349,7 +4866,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                                 Text(
                                   '${user.plan} • ${_formatCircuitExpiry(user.expiresAt)}',
                                   style: TextStyle(
-                                    color: isDark ? const Color(0xFF60A5FA) : const Color(0xFF64748B),
+                                    color: Colors.white.withValues(alpha: 0.85),
                                     fontSize: 11,
                                     fontWeight: FontWeight.w500,
                                   ),
@@ -4365,19 +4882,22 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                   ),
                   const SizedBox(height: 12),
 
-                  // Botão "⚡ Renovar" (como no Circuit)
+                  // Botão "⚡ Renovar" — vidro branco sobre o gradiente.
                   SizedBox(
                     width: double.infinity,
                     height: 38,
                     child: OutlinedButton(
                       style: OutlinedButton.styleFrom(
-                        backgroundColor: isDark ? const Color(0xFF0F172A) : Colors.white,
+                        backgroundColor:
+                            Colors.white.withValues(alpha: 0.16),
                         side: BorderSide(
-                          color: isDark ? const Color(0xFF3B82F6) : const Color(0xFFBFDBFE),
+                          color: Colors.white.withValues(alpha: 0.45),
                           width: 1.2,
                         ),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 16),
                         elevation: 0,
                       ),
                       onPressed: () {
@@ -4387,12 +4907,12 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                       child: const Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.bolt, size: 18, color: Color(0xFF2563EB)),
+                          Icon(Icons.bolt, size: 18, color: Colors.white),
                           SizedBox(width: 6),
                           Text(
                             'Renovar',
                             style: TextStyle(
-                              color: Color(0xFF2563EB),
+                              color: Colors.white,
                               fontSize: 13,
                               fontWeight: FontWeight.w700,
                             ),
@@ -4400,6 +4920,8 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                         ],
                       ),
                     ),
+                  ),
+                    ],
                   ),
                 ],
               ),
@@ -5130,6 +5652,60 @@ class _RouteNameDialogState extends State<_RouteNameDialog>
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Selo "OFFLINE" (F5): aparece quando sem rede ou em sessão local.
+/// Escuta [ConnectivityService.isOnline] + flag de sessão offline do auth.
+class _OfflineBadge extends StatelessWidget {
+  final bool isOfflineAuth;
+  const _OfflineBadge({required this.isOfflineAuth});
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<bool>(
+      valueListenable: ConnectivityService.instance.isOnline,
+      builder: (context, online, _) {
+        final show = !online || isOfflineAuth;
+        if (!show) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(top: 56),
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.72),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: Colors.orange.withValues(alpha: 0.6),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.cloud_off,
+                  size: 13,
+                  color: Colors.orange,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  online
+                      ? 'SESSÃO OFFLINE • dados locais'
+                      : 'OFFLINE • mapa e rotas locais',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.3,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

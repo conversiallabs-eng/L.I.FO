@@ -4,7 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme/app_theme.dart';
 import 'core/database/app_database.dart';
 import 'core/map/tile_cache.dart';
+import 'core/services/app_headers_service.dart';
 import 'core/network/supabase_service.dart';
+import 'core/network/connectivity_service.dart';
+import 'core/services/map_config_service.dart';
 import 'features/dashboard/presentation/screens/home_dashboard_screen.dart';
 import 'features/auth/presentation/controllers/auth_controller.dart';
 import 'features/auth/presentation/screens/login_screen.dart';
@@ -12,10 +15,13 @@ import 'features/auth/presentation/screens/login_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Lock orientation to portrait for in-vehicle use
+  // NÃO TRAVAR A ORIENTAÇÃO — app livre (retrato + paisagem).
+  // NÃO volte a restringir para portraitUp/portraitDown apenas: isso trava o app inteiro.
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
   ]);
 
   // Immersive UI — hide status bar on startup, re-shown by SystemChrome
@@ -28,18 +34,52 @@ void main() async {
   // Initialize SQLite immediately — fast, local-only, no network I/O
   await AppDatabase.instance.database;
 
-  // Cache de tiles do mapa em disco (Hive) — nunca trava o boot.
-  await TileCache.instance.initialize();
+  // Boot paralelo com timeouts curtos: sem internet o primeiro frame
+  // não pode esperar rede (era isso que prendia no splash azul).
+  // TileCache é só disco; Supabase falha rápido offline.
+  // Headers de identificação do app (pacote + cert p/ trava CARTO).
+  // Local e rápido (platform channel); nunca trava o boot.
+  Map<String, String> appHeaders = const {};
+  try {
+    appHeaders = await AppHeadersService.instance
+        .tileHeaders()
+        .timeout(const Duration(seconds: 3));
+  } catch (_) {}
 
-  // Initialize Supabase before the app renders so Auth state is ready
-  // on the very first frame (required for subscription check on startup)
-  await SupabaseService.instance.initialize();
+  await Future.wait([
+    TileCache.instance
+        .initialize(extraHeaders: appHeaders)
+        .timeout(const Duration(seconds: 3))
+        .catchError((_) {}),
+    SupabaseService.instance
+        .initialize()
+        .timeout(const Duration(seconds: 4))
+        .catchError((_) {}),
+  ]);
+
+  // Key da CARTO (Supabase → cache local; nunca no APK). Rápido e silencioso:
+  // sem key, as ruas caem no fallback Mapbox.
+  try {
+    await MapConfigService.instance
+        .refresh()
+        .timeout(const Duration(seconds: 4));
+  } catch (_) {}
+
+  final container = ProviderContainer();
+  // Observa a rede e drena a sync queue ao reconectar (F6).
+  // O attach do stream é feito no dashboard (tem BuildContext); aqui só
+  // tenta drenar o que já está pendente se o boot foi online.
+  // ignore: unawaited_futures
+  SupabaseService.instance.processSyncQueue().catchError((_) => 0);
 
   runApp(
-    const ProviderScope(
-      child: LifoApp(),
+    UncontrolledProviderScope(
+      container: container,
+      child: const LifoApp(),
     ),
   );
+  // Liga o listener de reconexão no container raiz.
+  ConnectivityService.instance.attach(container);
 }
 
 class LifoApp extends ConsumerWidget {
@@ -51,10 +91,16 @@ class LifoApp extends ConsumerWidget {
 
     Widget home;
     String switchKey;
+    final user = authState.user;
+    // Expirado sem oferta de confiança não usa (com oferta entra travado
+    // no PIX pela Home). A validade é do servidor; o app só roteia.
+    final expired =
+        user.isLoggedIn && !user.expiresAt.isAfter(DateTime.now());
+    final blocked = user.isLoggedIn && expired && !authState.graceOfferPending;
     if (authState.isBooting) {
       home = const _BootSplash();
       switchKey = 'boot';
-    } else if (authState.user.isLoggedIn) {
+    } else if (user.isLoggedIn && !blocked) {
       home = const HomeDashboardScreen();
       switchKey = 'home';
     } else {
