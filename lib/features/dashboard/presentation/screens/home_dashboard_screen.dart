@@ -394,9 +394,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     );
     _mapController = MapController();
     _fetchCurrentLocation();
-    // Bolhinha de atualização: checa a versão publicada no servidor sem
-    // segurar o boot (offline cai no último resultado conhecido).
-    unawaited(AppUpdateService.instance.checkForUpdate());
+    // Bolhinha e alerta automático de atualização no boot: checa a versão publicada
+    // no servidor e, se houver nova versão, abre a notificação/diálogo no app.
+    unawaited(_checkUpdateOnBoot());
     // Card começa no piso (cabeçalho + botão inteiros, sem lista): o
     // usuário levanta se quiser. Só na 1ª montagem e sem toque anterior.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -2833,6 +2833,24 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         );
       },
     );
+  }
+
+  bool _autoUpdatePrompted = false;
+
+  /// Checagem automática no boot: se houver versão nova publicada, exibe a
+  /// notificação/diálogo de atualização automaticamente ao abrir o app.
+  Future<void> _checkUpdateOnBoot() async {
+    final result = await AppUpdateService.instance.checkForUpdate();
+    if (!mounted || _autoUpdatePrompted) return;
+    if (result == UpdateCheck.available) {
+      final release = AppUpdateService.instance.availableUpdate.value;
+      if (release != null) {
+        _autoUpdatePrompted = true;
+        Future.delayed(const Duration(milliseconds: 1000), () {
+          if (mounted) _offerUpdate(release);
+        });
+      }
+    }
   }
 
   /// Verificação disparada pelo botão: fala com o servidor (não usa só o

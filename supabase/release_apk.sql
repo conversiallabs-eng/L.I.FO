@@ -55,7 +55,7 @@ DECLARE
   v_version TEXT    := '1.0.1';                          -- versionName do APK
   v_build   INTEGER := 2;                                -- versionCode (+N)
   v_apk_url TEXT    := 'https://lifo.com.br/lifo.apk';   -- URL na Hostinger
-  v_notes   TEXT    := 'Versão mega ofuscada com melhorias no baú e navegação.';
+  v_notes   TEXT    := 'Melhorias de desempenho e correções de estabilidade.';
   v_current TEXT;
 BEGIN
 -- └───────────────────────────────────────────────────────────────────────┘
