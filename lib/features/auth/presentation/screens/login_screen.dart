@@ -4,6 +4,7 @@ import '../../../dashboard/presentation/screens/home_dashboard_screen.dart';
 import '../controllers/auth_controller.dart';
 import '../widgets/google_sign_in_button.dart';
 import 'create_account_screen.dart';
+import 'legal_document_screen.dart';
 
 class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
@@ -445,6 +446,37 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                             color: Color(0xFF2563EB),
                             fontSize: 13,
                             fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Links Legais (Termos & Privacidade)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      GestureDetector(
+                        onTap: () => LegalDocumentScreen.openTerms(context),
+                        child: Text(
+                          'Termos de Uso',
+                          style: TextStyle(
+                            color: subColor,
+                            fontSize: 11.5,
+                            decoration: TextDecoration.underline,
+                          ),
+                        ),
+                      ),
+                      Text('  •  ', style: TextStyle(color: subColor, fontSize: 11.5)),
+                      GestureDetector(
+                        onTap: () => LegalDocumentScreen.openPrivacy(context),
+                        child: Text(
+                          'Privacidade',
+                          style: TextStyle(
+                            color: subColor,
+                            fontSize: 11.5,
+                            decoration: TextDecoration.underline,
                           ),
                         ),
                       ),

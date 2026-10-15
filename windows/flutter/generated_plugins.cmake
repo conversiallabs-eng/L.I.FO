@@ -4,6 +4,7 @@
 
 list(APPEND FLUTTER_PLUGIN_LIST
   app_links
+  connectivity_plus
   flutter_tts
   geolocator_windows
   url_launcher_windows

@@ -135,12 +135,12 @@ class _PixPaymentScreenState extends ConsumerState<PixPaymentScreen>
     _clockTimer?.cancel();
     _success.forward(from: 0);
 
-    // O webhook já ativou no servidor; espelha no app com os dias do plano.
+    // Servidor aplica os dias (com desconto da confiança, se houver).
+    // O webhook é a segunda via: idempotente, sem duplo-crédito.
     try {
-      await ref.read(authControllerProvider.notifier).renewSubscription(
-            days: widget.plan.days,
-            plan: widget.plan.planName,
-          );
+      await ref
+          .read(authControllerProvider.notifier)
+          .confirmRenewalPayment(paymentId: widget.pix.paymentId);
     } catch (_) {}
 
     await Future.delayed(const Duration(milliseconds: 2600));

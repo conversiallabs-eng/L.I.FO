@@ -88,17 +88,11 @@ class GoogleAuthService {
             avatarUrl: googleAccount.photoUrl,
           );
 
-      // Se é o primeiro login, salva perfil e cria subscription de trial
+      // Se é o primeiro login, salva os dados do perfil. O trial é criado
+      // pelo controller via fn_start_trial (server-side, trial único).
       if (remoteProfile == null) {
         await SupabaseService.instance.upsertUserProfile(
           profile.copyWith(isLoggedIn: true, isGoogleAuth: true),
-        );
-        await SupabaseService.instance.upsertSubscription(
-          userId: supaUser.id,
-          plan: 'Standard (Trial 30 Dias)',
-          expiresAt: profile.expiresAt,
-          status: 'trial',
-          paymentMethod: 'none',
         );
       }
 

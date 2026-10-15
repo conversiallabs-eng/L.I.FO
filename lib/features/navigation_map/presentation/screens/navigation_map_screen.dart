@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import '../../../../core/map/map_tiles.dart';
 import '../../../../core/map/tile_cache.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../route_manifest/domain/models/delivery_stop.dart';
@@ -53,11 +54,8 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
         ? LatLng(stops.first.latitude, stops.first.longitude)
         : const LatLng(-23.5505, -46.6333);
 
-    // Rota real: usa polyline OSRM (ruas) quando disponível, fallback linear offline.
-    final List<LatLng> fallbackPoints = stops.map((s) => LatLng(s.latitude, s.longitude)).toList();
-    final List<LatLng> routePoints = manifestState.roadPolyline.isNotEmpty
-        ? manifestState.roadPolyline
-        : fallbackPoints;
+    // Rua ou nada — nunca reta (ver hybrid_routing_service).
+    final List<LatLng> routePoints = manifestState.roadPolyline;
 
     final DeliveryStop? activeStop = stops.isNotEmpty
         ? stops[_activeStopIndex.clamp(0, stops.length - 1)]
@@ -80,42 +78,42 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
               backgroundColor: isCabinNight
                   ? AppColors.carbonBackground
                   : AppColors.lightBackground,
+              // Sem `rotate`: num pinch de dois dedos o mapa girava junto com o
+              // zoom, o que dá a sensação de o mapa "se enroscar". A rotação
+              // por código (modo course-up) continua funcionando.
+              interactionOptions: const InteractionOptions(
+                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+              ),
             ),
             children: [
-              // Tiles sem API key + cache em disco (sem retina simulada nas
-              // camadas com rótulo: ela encolhe os nomes das ruas à metade).
-              // noturno = Google com filtro dark (nítido até z20),
-              // claro = rua do Google (fallback OSM).
+              // Tiles da Mapbox + cache em disco (ver [MapTiles]).
+              // noturno = dark-v11 (estilo escuro nativo, sem filtro),
+              // claro = streets-v12.
               if (isCabinNight) ...[
                 TileLayer(
-                  urlTemplate:
-                      'https://mt{s}.google.com/vt/lyrs=m&hl=pt-BR&x={x}&y={y}&z={z}',
-                  subdomains: const ['0', '1', '2', '3'],
-                  fallbackUrl:
-                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  urlTemplate: MapTiles.roadsDark,
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
-                  tileBuilder: darkModeTileBuilder,
                   maxZoom: 18,
                   maxNativeZoom: 20,
-                  keepBuffer: 4,
-                  panBuffer: 2,
-                  tileDisplay: const TileDisplay.fadeIn(),
+                  // Padrões do flutter_map: menos tiles carregados/decodificados
+                  // fora da tela — pinch mais leve.
+                  keepBuffer: 2,
+                  panBuffer: 1,
+                  tileDisplay: const TileDisplay.instantaneous(),
                 ),
               ] else ...[
                 TileLayer(
-                  urlTemplate:
-                      'https://mt{s}.google.com/vt/lyrs=m&hl=pt-BR&x={x}&y={y}&z={z}',
-                  subdomains: const ['0', '1', '2', '3'],
-                  fallbackUrl:
-                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  urlTemplate: MapTiles.roads,
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
                   maxZoom: 18,
                   maxNativeZoom: 20,
-                  keepBuffer: 4,
-                  panBuffer: 2,
-                  tileDisplay: const TileDisplay.fadeIn(),
+                  // Padrões do flutter_map: menos tiles carregados/decodificados
+                  // fora da tela — pinch mais leve.
+                  keepBuffer: 2,
+                  panBuffer: 1,
+                  tileDisplay: const TileDisplay.instantaneous(),
                 ),
               ],
 
@@ -174,6 +172,29 @@ class _NavigationMapScreenState extends ConsumerState<NavigationMapScreen> {
                 }).toList(),
               ),
             ],
+            ),
+          ),
+
+          // Atribuição exigida por licença (Mapbox/OSM) — mesmo padrão do
+          // LogisticsMapCanvas.
+          Positioned(
+            right: 8,
+            bottom: 8,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              // `attribution` é getter (depende da key CARTO): não pode ser const.
+              child: Text(
+                MapTiles.attribution,
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
             ),
           ),
 

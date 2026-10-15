@@ -4,6 +4,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/cpf_validator.dart';
 import '../controllers/auth_controller.dart';
 import '../widgets/google_sign_in_button.dart';
+import 'legal_document_screen.dart';
 
 class CreateAccountScreen extends ConsumerStatefulWidget {
   const CreateAccountScreen({super.key});
@@ -499,9 +500,47 @@ class _CreateAccountScreenState extends ConsumerState<CreateAccountScreen> {
                       onChanged: (val) => setState(() => _acceptTerms = val ?? false),
                     ),
                     Expanded(
-                      child: Text(
-                        'Concordo com os Termos de Uso, Política Antifraude e Ativação do Trial de 30 dias.',
-                        style: TextStyle(color: subColor, fontSize: 12),
+                      child: Text.rich(
+                        TextSpan(
+                          text: 'Concordo com os ',
+                          style: TextStyle(color: subColor, fontSize: 12),
+                          children: [
+                            WidgetSpan(
+                              alignment: PlaceholderAlignment.baseline,
+                              baseline: TextBaseline.alphabetic,
+                              child: GestureDetector(
+                                onTap: () => LegalDocumentScreen.openTerms(context),
+                                child: const Text(
+                                  'Termos de Uso',
+                                  style: TextStyle(
+                                    color: Color(0xFF2563EB),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const TextSpan(text: ', a '),
+                            WidgetSpan(
+                              alignment: PlaceholderAlignment.baseline,
+                              baseline: TextBaseline.alphabetic,
+                              child: GestureDetector(
+                                onTap: () => LegalDocumentScreen.openPrivacy(context),
+                                child: const Text(
+                                  'Política de Privacidade',
+                                  style: TextStyle(
+                                    color: Color(0xFF2563EB),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    decoration: TextDecoration.underline,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const TextSpan(text: ' e ativação do Trial de 30 dias.'),
+                          ],
+                        ),
                       ),
                     ),
                   ],

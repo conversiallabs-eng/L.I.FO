@@ -33,7 +33,7 @@ class SupabaseService {
       await Supabase.initialize(
         url: _kSupabaseUrl,
         publishableKey: _kSupabasePublishableKey,
-      );
+      ).timeout(const Duration(seconds: 8));
       _isInitialized = true;
     } catch (e) {
       _isInitialized = false;
@@ -112,9 +112,11 @@ class SupabaseService {
 
   // ─── PERFIL DE USUÁRIO ────────────────────────────────────────────────────
 
-  /// Salva ou atualiza o perfil do usuário na tabela `user_profiles` do Supabase.
-  /// Retorna null em caso de sucesso ou a mensagem de erro real (RLS, coluna
-  /// inexistente, etc.) — o chamador decide o que mostrar ao usuário.
+  /// Salva ou atualiza os DADOS do usuário na tabela `user_profiles`.
+  /// NUNCA envia plan/expires_at: plano e validade são propriedade do
+  /// servidor (webhook/funções); o trigger trg_guard_money barra escrita
+  /// dessas colunas por cliente (anti-calote).
+  /// Retorna null em caso de sucesso ou a mensagem de erro real.
   /// Usa onConflict=auth_uid (único por login) p/ edição nunca virar INSERT
   /// duplicado nem esbarrar em UPDATE sem policy.
   Future<String?> upsertUserProfile(UserProfile profile) async {
@@ -136,8 +138,6 @@ class SupabaseService {
           'city_uf': profile.cityUf,
           'vehicle_type': profile.vehicleType,
           'avatar_url': profile.avatarUrl,
-          'plan': profile.plan,
-          'expires_at': profile.expiresAt.toIso8601String(),
           'updated_at': DateTime.now().toIso8601String(),
         },
         onConflict: 'auth_uid',
@@ -213,50 +213,83 @@ class SupabaseService {
     return 'Standard (Trial 30 Dias)';
   }
 
-  /// Cria ou atualiza uma assinatura no Supabase.
-  /// Mapeia os nomes amigáveis do app para as colunas/valores reais da
-  /// tabela `subscriptions` (plan_type, status com CHECK, price_cents).
-  Future<bool> upsertSubscription({
-    required String userId,
-    required String plan,
-    required DateTime expiresAt,
-    required String status, // 'trial', 'active', 'expired', 'cancelled'
-    String paymentMethod = 'manual',
-  }) async {
-    if (!_isInitialized) return false;
-    final planLower = plan.toLowerCase();
-    final isTrial =
-        status == 'trial' || status == 'trialing' || planLower.contains('trial');
-    // plan_type CHECK: trial | pix_manual | credit_card_auto
-    final planType = isTrial
-        ? 'trial'
-        : (paymentMethod == 'card' ? 'credit_card_auto' : 'pix_manual');
-    // status CHECK: active | past_due | canceled | expired | trialing
-    String dbStatus;
-    if (status == 'trial' || status == 'trialing') {
-      dbStatus = 'trialing';
-    } else if (status == 'cancelled' || status == 'canceled') {
-      dbStatus = 'canceled';
-    } else if (status == 'active' ||
-        status == 'expired' ||
-        status == 'past_due') {
-      dbStatus = status;
-    } else {
-      dbStatus = 'past_due';
-    }
+  // ─── DINHEIRO NO SERVIDOR (anti-calote) ─────────────────────────────────
+  // O app nunca escreve assinatura/plano/expiração: tudo via RPC/Edge
+  // (fn_start_trial, fn_trust_grace_*, fn_apply_payment, confirm-renewal).
+  // O trigger trg_guard_money barra qualquer escrita direta dessas colunas.
+
+  /// Trial único por usuário (server-side; sem trial infinito).
+  /// Retorna o mapa da função ({ok, trial, expires_at}) ou null sem rede.
+  Future<Map<String, dynamic>?> startTrial() async {
+    if (!_isInitialized || currentUser == null) return null;
     try {
-      await _client.from('subscriptions').upsert({
-        'user_id': userId,
-        'plan_type': planType,
-        'status': dbStatus,
-        'price_cents': isTrial ? 0 : 1990,
-        'starts_at': DateTime.now().toIso8601String(),
-        'expires_at': expiresAt.toIso8601String(),
-        'updated_at': DateTime.now().toIso8601String(),
-      });
-      return true;
+      final res = await _client
+          .rpc('fn_start_trial')
+          .timeout(const Duration(seconds: 10));
+      return (res as Map?)?.map((k, v) => MapEntry(k.toString(), v));
     } catch (_) {
-      return false;
+      return null;
+    }
+  }
+
+  /// Elegibilidade da confiança (servidor): {eligible, reason, ...}.
+  Future<Map<String, dynamic>?> trustGraceStatus() async {
+    if (!_isInitialized || currentUser == null) return null;
+    try {
+      final res = await _client
+          .rpc('fn_trust_grace_status')
+          .timeout(const Duration(seconds: 8));
+      return (res as Map?)?.map((k, v) => MapEntry(k.toString(), v));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Concede/reconcilia a confiança no servidor (idempotente).
+  /// [deviceGrantedAt]: alegação do aparelho p/ graça provisória offline.
+  Future<Map<String, dynamic>?> trustGraceGrant(
+      {DateTime? deviceGrantedAt}) async {
+    if (!_isInitialized || currentUser == null) return null;
+    try {
+      final res = await _client.rpc(
+        'fn_trust_grace_grant',
+        params: {
+          'p_device_granted_at': deviceGrantedAt?.toIso8601String(),
+        },
+      ).timeout(const Duration(seconds: 10));
+      return (res as Map?)?.map((k, v) => MapEntry(k.toString(), v));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Confirma renovação pós-PIX no servidor (aplica dias com desconto da
+  /// confiança e devolve a expiração oficial). O app usa o retorno — nunca
+  /// calcula expiração local.
+  Future<Map<String, dynamic>?> confirmRenewal({
+    required String paymentId,
+    DateTime? provisionalGrantedAt,
+  }) async {
+    if (!_isInitialized || currentUser == null) return null;
+    try {
+      final res = await _client.functions.invoke(
+        'confirm-renewal',
+        body: {
+          'payment_id': paymentId,
+          if (provisionalGrantedAt != null)
+            'provisional_granted_at':
+                provisionalGrantedAt.toIso8601String(),
+        },
+      ).timeout(const Duration(seconds: 25));
+      if (res.status != 200 || res.data == null) return null;
+      final data = res.data is String
+          ? jsonDecode(res.data as String)
+          : res.data;
+      final map = (data as Map?)?.map((k, v) => MapEntry(k.toString(), v));
+      if (map == null || map['error'] != null) return null;
+      return map;
+    } catch (_) {
+      return null;
     }
   }
 

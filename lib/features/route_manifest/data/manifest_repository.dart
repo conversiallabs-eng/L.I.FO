@@ -2,9 +2,11 @@ import 'dart:convert';
 import 'package:latlong2/latlong.dart';
 import 'package:uuid/uuid.dart';
 import '../../../core/database/app_database.dart';
+import '../../../core/utils/lifo_calculator.dart';
 import '../../../core/services/hybrid_routing_service.dart';
 import '../../../core/services/manifest_import_service.dart';
 import '../../../core/services/geocoding_service.dart';
+import '../../../core/network/net_guard.dart';
 import '../../../core/network/supabase_service.dart';
 import '../domain/models/manifest_version.dart';
 import '../domain/models/delivery_stop.dart';
@@ -250,11 +252,24 @@ class ManifestRepository {
     final bool hasFinished = finishedStops.isNotEmpty && pendingStops.isNotEmpty;
     final stopsToOptimize = hasFinished ? pendingStops : baseStops;
 
-    final routing = await _routingService.optimizeAndRoute(
-      rawStops: stopsToOptimize,
-      startLat: startLat,
-      startLng: startLng,
-    );
+    // Offline: ordem preservada, sem polyline, sem queimar timeouts OSRM.
+    // (A geometria de rua será restaurada do banco em fetchGeometry.)
+    final bool offline = await isOfflineFast();
+    final routing = offline
+        ? RoutingResult(
+            // Ordem preservada; só os slots LIFO (sem cálculo de distância).
+            stops: LifoCalculator.assignSlots(stopsToOptimize),
+            polylinePoints: const [],
+            isOnline: false,
+            totalDistanceMeters: 0,
+            totalDurationSeconds: 0,
+            legDurationsSeconds: const [],
+          )
+        : await _routingService.optimizeAndRoute(
+            rawStops: stopsToOptimize,
+            startLat: startLat,
+            startLng: startLng,
+          );
 
     final List<DeliveryStop> newStops = [];
 
@@ -326,12 +341,63 @@ class ManifestRepository {
     await _db.saveManifestVersion(newVersion);
     SupabaseService.instance.pushManifestVersion(newVersion);
 
+    // Geometria de rua persistida: reabrir offline mostra o traçado real.
+    var outPolyline = routing.polylinePoints;
+    var outDistance = routing.totalDistanceMeters;
+    var outDuration = routing.totalDurationSeconds;
+    if (routing.isOnline && routing.polylinePoints.isNotEmpty) {
+      try {
+        await _db.saveRouteGeometry(
+          versionId: newVersionId,
+          encodedPolyline: AppDatabase.encodePolyline([
+            for (final p in routing.polylinePoints)
+              {'lat': p.latitude, 'lng': p.longitude},
+          ]),
+          distanceMeters: routing.totalDistanceMeters,
+          durationSeconds: routing.totalDurationSeconds,
+        );
+      } catch (_) {}
+    } else if (routing.polylinePoints.isEmpty) {
+      // Versão nascida offline (ex.: parada adicionada sem rede): herda a
+      // última rua salva da versão de origem em vez de nascer sem linha.
+      // A ordem offline é preservada, então a geometria segue válida
+      // (para parada nova, falta só o trechinho dela — marcadores mostram).
+      try {
+        final sourceId = parentId ??
+            (baseStops.isNotEmpty
+                ? baseStops.first.manifestVersionId
+                : null);
+        final inherited = sourceId == null
+            ? null
+            : await _db.getRouteGeometry(sourceId);
+        final pts =
+            AppDatabase.decodePolyline(inherited?['road_polyline'] as String?);
+        if (pts.isNotEmpty) {
+          await _db.saveRouteGeometry(
+            versionId: newVersionId,
+            encodedPolyline: inherited!['road_polyline'] as String,
+            distanceMeters:
+                (inherited['road_distance_m'] as num?)?.toDouble() ?? 0,
+            durationSeconds:
+                (inherited['road_duration_s'] as num?)?.toDouble() ?? 0,
+          );
+          outPolyline = [
+            for (final p in pts) LatLng(p['lat']!, p['lng']!),
+          ];
+          outDistance =
+              (inherited['road_distance_m'] as num?)?.toDouble() ?? 0;
+          outDuration =
+              (inherited['road_duration_s'] as num?)?.toDouble() ?? 0;
+        }
+      } catch (_) {}
+    }
+
     return (
       version: newVersion,
-      polyline: routing.polylinePoints,
+      polyline: outPolyline,
       isOnline: routing.isOnline,
-      distanceMeters: routing.totalDistanceMeters,
-      durationSeconds: routing.totalDurationSeconds,
+      distanceMeters: outDistance,
+      durationSeconds: outDuration,
       arrivalOffsets: RoutingResult.arrivalOffsets(
         legDurations: routing.legDurationsSeconds,
         stopCount: newStops.length,
@@ -351,11 +417,76 @@ class ManifestRepository {
     ).toList();
     final targetStops = pending.isNotEmpty ? pending : stops;
 
-    return await _routingService.fetchGeometryOnly(
+    // Rua salva primeiro: instantâneo e evita recomputar a rota inteira
+    // no OSRM a cada delete/boot/conclusão (era essa a demora ao excluir —
+    // 83 paradas × chunks de 25 com timeout de 10s por servidor).
+    // O refresh de rua acontece no "Otimizar" explícito, que persiste.
+    final stored = await _storedGeometry(targetStops);
+    if (stored != null) return stored;
+
+    // Offline sem rua salva: vazio honesto, sem queimar timeouts OSRM.
+    if (await isOfflineFast()) {
+      return RoutingResult(
+        stops: targetStops,
+        polylinePoints: const [],
+        isOnline: false,
+        totalDistanceMeters: 0,
+        totalDurationSeconds: 0,
+        legDurationsSeconds: const [],
+      );
+    }
+
+    final routing = await _routingService.fetchGeometryOnly(
       stops: targetStops,
       startLat: startLat,
       startLng: startLng,
     );
+    if (routing.polylinePoints.isNotEmpty) {
+      // Online: persiste para o próximo boot offline.
+      try {
+        await _db.saveRouteGeometry(
+          versionId: targetStops.first.manifestVersionId,
+          encodedPolyline: AppDatabase.encodePolyline([
+            for (final p in routing.polylinePoints)
+              {'lat': p.latitude, 'lng': p.longitude},
+          ]),
+          distanceMeters: routing.totalDistanceMeters,
+          durationSeconds: routing.totalDurationSeconds,
+        );
+      } catch (_) {}
+      return routing;
+    }
+
+    // Sem rua na rede nem no banco: vazio — nunca reta.
+    return routing;
+  }
+
+  /// Última geometria de rua salva no banco para a versão dessas paradas.
+  /// Null quando nunca houve cálculo online.
+  Future<RoutingResult?> _storedGeometry(List<DeliveryStop> targetStops) async {
+    if (targetStops.isEmpty) return null;
+    try {
+      final stored =
+          await _db.getRouteGeometry(targetStops.first.manifestVersionId);
+      if (stored == null) return null;
+      final pts =
+          AppDatabase.decodePolyline(stored['road_polyline'] as String?);
+      if (pts.isEmpty) return null;
+      return RoutingResult(
+        stops: targetStops,
+        polylinePoints: [
+          for (final p in pts) LatLng(p['lat']!, p['lng']!),
+        ],
+        isOnline: false,
+        totalDistanceMeters:
+            (stored['road_distance_m'] as num?)?.toDouble() ?? 0,
+        totalDurationSeconds:
+            (stored['road_duration_s'] as num?)?.toDouble() ?? 0,
+        legDurationsSeconds: const [],
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   List<Map<String, dynamic>> _decodeRawList(String rawData) {
@@ -610,11 +741,39 @@ class ManifestRepository {
     ).toList();
     final stopsToRoute = pendingStops.isNotEmpty ? pendingStops : updatedCurrent.stops;
 
+    // Offline: edição salva local; a rua antiga não vale para o novo
+    // endereço — volta vazio (nunca reta, nunca rua stale) até a rede voltar.
+    if (await isOfflineFast()) {
+      return (
+        version: updatedCurrent,
+        polyline: <LatLng>[],
+        isOnline: false,
+        distanceMeters: 0.0,
+        durationSeconds: 0.0,
+        arrivalOffsets: <double>[],
+      );
+    }
+
     final routing = await _routingService.optimizeAndRoute(
       rawStops: stopsToRoute,
       startLat: startLat,
       startLng: startLng,
     );
+
+    // Online: atualiza a rua salva (a versão é a mesma, in-place).
+    if (routing.isOnline && routing.polylinePoints.isNotEmpty) {
+      try {
+        await _db.saveRouteGeometry(
+          versionId: updatedCurrent.id,
+          encodedPolyline: AppDatabase.encodePolyline([
+            for (final p in routing.polylinePoints)
+              {'lat': p.latitude, 'lng': p.longitude},
+          ]),
+          distanceMeters: routing.totalDistanceMeters,
+          durationSeconds: routing.totalDurationSeconds,
+        );
+      } catch (_) {}
+    }
 
     return (
       version: updatedCurrent,
@@ -664,11 +823,42 @@ class ManifestRepository {
     ).toList();
     final stopsToRoute = pending.isNotEmpty ? pending : remaining;
 
+    // Offline: sem rede não há traçado novo — vazio honesto até reconectar.
+    if (await isOfflineFast()) {
+      return (
+        version: updatedCurrent ?? current,
+        polyline: <LatLng>[],
+        isOnline: false,
+        distanceMeters: 0.0,
+        durationSeconds: 0.0,
+        arrivalOffsets: RoutingResult.arrivalOffsets(
+          legDurations: const [],
+          stopCount: remaining.length,
+          hasStart: startLat != null && startLng != null,
+        ),
+      );
+    }
+
     final routing = await _routingService.fetchGeometryOnly(
       stops: stopsToRoute,
       startLat: startLat,
       startLng: startLng,
     );
+
+    // Online: atualiza a rua salva (versão in-place).
+    if (routing.isOnline && routing.polylinePoints.isNotEmpty) {
+      try {
+        await _db.saveRouteGeometry(
+          versionId: (updatedCurrent ?? current).id,
+          encodedPolyline: AppDatabase.encodePolyline([
+            for (final p in routing.polylinePoints)
+              {'lat': p.latitude, 'lng': p.longitude},
+          ]),
+          distanceMeters: routing.totalDistanceMeters,
+          durationSeconds: routing.totalDurationSeconds,
+        );
+      } catch (_) {}
+    }
 
     return (
       version: updatedCurrent ?? current,

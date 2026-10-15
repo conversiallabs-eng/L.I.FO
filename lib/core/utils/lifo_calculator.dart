@@ -2,8 +2,14 @@ import 'dart:math';
 import '../../features/route_manifest/domain/models/delivery_stop.dart';
 import '../../features/route_manifest/domain/models/package_item.dart';
 import '../../features/route_manifest/domain/models/spatial_slot.dart';
+import '../models/route_step.dart';
 
 class LifoCalculator {
+  /// Raio de tolerância para validação "estou no endereço" (QR + GPS).
+  /// Bipou o código certo dentro disso = local confirmado. Fora disso o
+  /// app avisa a distância mas NÃO trava a entrega.
+  static const double locationGateMeters = 150.0;
+
   /// Distância em metros entre dois pontos geográficos (Fórmula de Haversine).
   static double calculateDistanceMeters(
     double lat1,
@@ -324,6 +330,26 @@ class LifoCalculator {
     );
 
     return assignSlots(untangled);
+  }
+
+  /// Rua atual pelo progresso na perna: último step com nome até o ponto
+  /// mais próximo do GPS. Pura, sem rede: usa os steps da perna já
+  /// calculada. Null sem perna/steps (offline sem traçado) — o HUD então
+  /// mostra o destino em vez de inventar nome.
+  static String? streetAtProgress(
+    List<RouteStep> steps,
+    List<int> stepIndices,
+    int closestIdx,
+  ) {
+    if (steps.isEmpty || stepIndices.length != steps.length) return null;
+    String? name;
+    for (var i = 0; i < steps.length; i++) {
+      final si = stepIndices[i];
+      if (si < 0 || si > closestIdx) continue;
+      final s = steps[i].streetName.trim();
+      if (s.isNotEmpty) name = s;
+    }
+    return name;
   }
 
   static List<PackageItem> getLoadingSequence(List<PackageItem> packages) {

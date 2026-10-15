@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Política de Privacidade — L.I.F.O.</title>
+<meta name="description" content="Política de Privacidade e Proteção de Dados Pessoais (LGPD) da plataforma e aplicativo móvel L.I.F.O.">
+<style>
+:root{--blue:#0066FF;--ink:#0F172A;--mut:#475569;--bg:#F6F8FF;--line:#E2E8F0;--card:#FFFFFF}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Segoe UI,Arial,sans-serif;color:var(--ink);background:#fff;line-height:1.7}
+.wrap{max-width:880px;margin:0 auto;padding:0 20px}
+header{position:sticky;top:0;background:#fff;border-bottom:1px solid var(--line);z-index:10}
+nav{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;max-width:1080px;margin:0 auto}
+.logo{font-weight:800;font-size:22px;text-decoration:none;color:var(--ink)}.logo span{color:var(--blue)}
+.links{display:flex;gap:18px;align-items:center}.links a{text-decoration:none;color:var(--mut);font-size:15px}
+.btn{display:inline-block;background:var(--blue);color:#fff;padding:10px 22px;border-radius:10px;text-decoration:none;font-weight:700;font-size:14px}
+.hero-legal{background:var(--bg);padding:48px 0 36px;border-bottom:1px solid var(--line)}
+.kicker{color:var(--blue);font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px}
+h1{font-size:clamp(28px,4vw,40px);line-height:1.2;margin-bottom:8px}
+.date{color:var(--mut);font-size:14px}
+.content{padding:48px 0 64px}
+h2{font-size:20px;color:var(--ink);margin:32px 0 12px;padding-bottom:6px;border-bottom:2px solid var(--line);display:flex;align-items:center;gap:8px}
+h2 span.num{color:var(--blue);font-weight:800}
+p{color:#334155;margin-bottom:16px;font-size:15px}
+ul{margin:0 0 16px 24px;color:#334155;font-size:15px}
+li{margin-bottom:8px}
+.highlight-box{background:var(--bg);border-left:4px solid var(--blue);padding:16px 20px;border-radius:0 10px 10px 0;margin:20px 0;font-size:14.5px;color:#1E293B}
+footer{background:var(--ink);color:#CBD5E1;padding:40px 0;margin-top:48px}
+footer a{color:#fff;text-decoration:none}
+footer a:hover{text-decoration:underline}
+@media(max-width:640px){.links a:not(.btn){display:none}}
+</style>
+</head>
+<body>
+<header><nav>
+<a class="logo" href="index.html">L.I.F.O<span>.</span></a>
+<div class="links">
+<a href="index.html">Início</a>
+<a href="termos.html">Termos de uso</a>
+<a class="btn" href="lifo.apk">Baixar o app</a>
+</div></nav></header>
+
+<div class="hero-legal"><div class="wrap">
+<div class="kicker">Privacidade e Proteção de Dados (LGPD)</div>
+<h1>Política de Privacidade</h1>
+<p class="date">Última atualização: 15 de outubro de 2026</p>
+</div></div>
+
+<main class="content"><div class="wrap">
+
+<div class="highlight-box">
+<strong>Transparência e Respeito à sua Privacidade:</strong><br>
+O L.I.F.O. preza pela segurança, confidencialidade e privacidade dos dados de seus usuários e entregadores parceiros. Esta Política descreve detalhadamente como coletamos, utilizamos, armazenamos e protegemos seus dados em estrita conformidade com a <strong>Lei Geral de Proteção de Dados Pessoais (LGPD — Lei nº 13.709/2018)</strong> e o <strong>Marco Civil da Internet (Lei nº 12.965/2014)</strong>.
+</div>
+
+<h2><span class="num">01.</span> Princípios e Papéis sob a LGPD</h2>
+<p>Na operação da plataforma L.I.F.O., identificamos claramente as seguintes posições de tratamento:</p>
+<ul>
+<li><strong>Controlador de Dados:</strong> O L.I.F.O. atua como Controlador dos dados cadastrais dos motoristas e usuários cadastrados (necessários para gestão de conta, suporte, faturamento e cumprimento de obrigações legais).</li>
+<li><strong>Operador de Dados:</strong> O L.I.F.O. atua na qualidade de Operador técnico quanto aos dados contidos nas listas e manifestos de entrega importados pelos motoristas (dados de remetentes, destinatários e códigos de rastreio de pacotes), tratando-os unicamente para a finalidade estrita de fornecer a otimização de rotas e o mapa espacial LIFO ao usuário.</li>
+</ul>
+
+<h2><span class="num">02.</span> Dados Coletados e Finalidades de Uso</h2>
+<p>Coletamos exclusivamente os dados necessários para o funcionamento e faturamento do serviço, agrupados nas seguintes categorias:</p>
+
+<h3>A. Dados Cadastrais do Usuário</h3>
+<ul>
+<li><strong>Nome completo e e-mail:</strong> Para identificação, autenticação, comunicação de serviço e recuperação de acesso.</li>
+<li><strong>Telefone / WhatsApp:</strong> Para suporte ao motorista, validação de conta e avisos emergenciais sobre o plano.</li>
+<li><strong>CPF ou RG:</strong> Exigido para conformidade regulatória, prevenção a fraudes cadastrais e viabilização da emissão de cobranças Pix nominativas junto ao parceiro financeiro.</li>
+<li><strong>Endereço de Faturamento (Rua, CEP, Cidade/UF):</strong> Necessário para faturamento fiscal e conciliação bancária das cobranças da assinatura.</li>
+</ul>
+
+<h3>B. Dados de Autenticação</h3>
+<ul>
+<li><strong>Credenciais de Acesso:</strong> Senha com hash criptográfico seguro (não acessível em texto puro) gerenciada via Supabase Auth, ou tokens seguros de autenticação via Google Sign-In.</li>
+</ul>
+
+<h3>C. Dados Operacionais de Entregas (Manifestos)</h3>
+<ul>
+<li><strong>Listas de Entregas e Encomendas:</strong> Arquivos e dados de paradas importados pelo motorista (endereço de destino, bairro, notas e códigos de barras bipados). Esses dados são processados para gerar o roteiro e a visualização das caixas no baú, não sendo comercializados nem compartilhados com anunciantes.</li>
+</ul>
+
+<h2><span class="num">03.</span> Permissões de Dispositivo Solicitadas pelo Aplicativo</h2>
+<p>Para fornecer suas funcionalidades fundamentais, o aplicativo L.I.F.O. solicita as seguintes permissões específicas no sistema Android:</p>
+<ul>
+<li><strong>Câmera:</strong> Utilizada estritamente para leitura óptica em tempo real de códigos de barras (Code 128, QR Code, Datamatrix) das etiquetas de encomendas pelo leitor integrado. O aplicativo não grava fotos, vídeos ou áudios do ambiente nem armazena imagens capturadas pela lente da câmera.</li>
+<li><strong>Localização (GPS em primeiro plano):</strong> Utilizada para posicionar o veículo no mapa de navegação, recalcular a proximidade da próxima parada da rota e apoiar a entrega das encomendas. A localização não é vendida para terceiros nem utilizada para publicidade direcionada.</li>
+<li><strong>Acesso a Arquivos / Armazenamento:</strong> Utilizada para que o usuário possa selecionar e importar seus manifestos de entrega em formato CSV, Excel (.xlsx) ou TXT a partir da memória do celular, e para guardar o cache local offline dos mapas e paradas.</li>
+</ul>
+
+<h2><span class="num">04.</span> Arquitetura Offline-First e Armazenamento Local</h2>
+<p>O L.I.F.O. foi projetado desde o primeiro dia com arquitetura <strong>Offline-First</strong> para atender à realidade dos motoristas em trânsito:</p>
+<ul>
+<li>Seus dados de rotas ativas, paradas, histórico de versões e marcações de baú ficam salvos localmente no dispositivo (banco de dados SQLite local criptografado e isolado na sandbox do aplicativo).</li>
+<li>Caso você fique sem internet, o aplicativo continua operando normalmente sem interromper o trabalho.</li>
+<li>Quando uma conexão com a internet for restabelecida, os dados da rota são sincronizados de forma segura com o nosso banco de dados em nuvem.</li>
+</ul>
+
+<h2><span class="num">05.</span> Compartilhamento de Dados com Terceiros</h2>
+<p>O L.I.F.O. <strong>não comercializa, não aluga e não repassa</strong> dados pessoais ou informações das suas entregas para redes de publicidade, corretores de dados (data brokers) ou terceiros não autorizados.</p>
+<p>O compartilhamento estritamente necessário ocorre apenas com os seguintes parceiros de infraestrutura e serviços essenciais:</p>
+<ul>
+<li><strong>Asaas Gestão Financeira Instituição de Pagamento S.A.:</strong> Para geração do QR Code Pix, conciliação e emissão de cobranças, validação de CPF e identificação antifraude.</li>
+<li><strong>Supabase Inc.:</strong> Para provedoria de infraestrutura de banco de dados em nuvem, controle de autenticação e replicação segura de dados de rotas sincronizadas.</li>
+<li><strong>Provedores de Mapas Cartográficos (ex.: Carto / OpenStreetMap / Mapbox):</strong> Para carregamento de tiles e camadas visuais cartográficas no dispositivo.</li>
+<li><strong>Autoridades Públicas e Judiciais:</strong> Quando estritamente exigido por determinação judicial, ordem de autoridade competente ou obrigação legal regulatória.</li>
+</ul>
+
+<h2><span class="num">06.</span> Segurança da Informação</h2>
+<p>Adotamos medidas técnicas, organizacionais e administrativas de segurança aptas a proteger seus dados contra acessos não autorizados, perdas acidentais ou destruição ilícita:</p>
+<ul>
+<li>Criptografia de ponta em trânsito com protocolo HTTPS / TLS 1.3;</li>
+<li>Políticas rigorosas de segurança em nível de linha (Row Level Security - RLS) em nosso banco de dados em nuvem, assegurando que um motorista jamais consiga acessar dados ou rotas de outro motorista;</li>
+<li>Armazenamento de senhas em formato com hash criptográfico irreversível;</li>
+<li>Controle restrito de acesso interno limitado a profissionais autorizados sujeitos a sigilo e confidencialidade.</li>
+</ul>
+
+<h2><span class="num">07.</span> Direitos do Titular de Dados (Artigo 18 da LGPD)</h2>
+<p>Nos termos do artigo 18 da Lei Geral de Proteção de Dados, você tem o direito de solicitar a qualquer momento e gratuitamente:</p>
+<ul>
+<li><strong>Confirmação e Acesso:</strong> Confirmar a existência de tratamento e acessar os dados pessoais que mantemos a seu respeito;</li>
+<li><strong>Correção:</strong> Solicitar a atualização ou correção de dados incompletos, inexatos ou desatualizados diretamente na tela "Minha Conta" do aplicativo ou via suporte;</li>
+<li><strong>Anonimização, Bloqueio ou Eliminação:</strong> Solicitar a eliminação de dados desnecessários, excessivos ou tratados em desconformidade com a LGPD;</li>
+<li><strong>Portabilidade:</strong> Solicitar a exportação dos seus dados pessoais em formato interoperável estruturado;</li>
+<li><strong>Revogação do Consentimento:</strong> Revogar o consentimento previamente fornecido, com aviso sobre as consequências na continuidade do uso do app.</li>
+</ul>
+
+<h2><span class="num">08.</span> Retenção e Exclusão de Dados</h2>
+<p>Os dados cadastrais e o histórico de rotas são retidos enquanto a conta do usuário permanecer ativa na plataforma ou pelo período necessário para cumprimento de obrigações legais, fiscais, auditoria e prevenção a fraudes (nos termos do Marco Civil da Internet e do Código Civil Brasileiro).</p>
+<p>Caso deseje encerrar definitivamente sua conta e solicitar a exclusão integral dos seus dados pessoais, basta enviar uma mensagem a partir do e-mail cadastrado para <strong>contato@lifo.com.br</strong> com o assunto "Exclusão de Conta e Dados".</p>
+
+<h2><span class="num">09.</span> Alterações nesta Política de Privacidade</h2>
+<p>Podemos atualizar esta Política de Privacidade periodicamente para adequação a novas funcionalidades ou diretrizes da Autoridade Nacional de Proteção de Dados (ANPD). A data da versão mais recente estará sempre visível no início do documento.</p>
+
+<h2><span class="num">10.</span> Encarregado pelo Tratamento de Dados (DPO) e Contato</h2>
+<p>Para exercer quaisquer de seus direitos de titular, registrar dúvidas, solicitações ou comunicações referentes à privacidade e proteção de dados pessoais, entre em contato diretamente com o nosso Encarregado de Proteção de Dados:</p>
+<p><strong>Canal de Privacidade e DPO:</strong> <a href="mailto:contato@lifo.com.br" style="color:var(--blue);font-weight:700">contato@lifo.com.br</a><br>
+<strong>Localização:</strong> Florianópolis, Santa Catarina, Brasil.</p>
+
+</div></main>
+
+<footer><div class="wrap">
+<div class="logo" style="color:#fff;margin-bottom:12px">L.I.F.O<span>.</span></div>
+<p style="color:#94A3B8;font-size:14px">Inteligência na carga. Agilidade na entrega. Feito em Florianópolis, Brasil.<br>E-mail: contato@lifo.com.br</p>
+<p style="margin-top:20px;font-size:13px;color:#94A3B8">© L.I.F.O. 2026 · <a href="termos.html" style="color:#fff">Termos de uso</a> · <a href="privacidade.html" style="color:#fff">Privacidade</a> · <a href="index.html" style="color:#fff">Página Principal</a></p>
+</div></footer>
+</body>
+</html>

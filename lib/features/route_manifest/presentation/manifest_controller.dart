@@ -9,6 +9,7 @@ import '../domain/models/package_item.dart';
 import '../domain/models/spatial_slot.dart';
 import '../../../core/services/hybrid_routing_service.dart';
 import '../../../core/services/manifest_import_service.dart';
+import '../../../core/network/net_guard.dart';
 
 class ManifestState {
   final ManifestVersion? currentVersion;
@@ -143,6 +144,12 @@ class ManifestNotifier extends StateNotifier<ManifestState> {
   Future<void> reoptimizeRoute({double? startLat, double? startLng}) async {
     final current = state.currentVersion;
     if (current == null) return;
+
+    // Offline, reotimizar seria criar uma versão nova vazia e aposentar a
+    // versão que tem a rua salva — ou seja, apagar a linha do mapa à toa
+    // (a ordem sem OSRM nem mudaria). No-op silencioso; o botão manual
+    // avisa via SnackBar e o auto-boot só pula.
+    if (await isOfflineFast()) return;
 
     state = state.copyWith(isLoading: true, errorMessage: null);
     try {
@@ -404,6 +411,22 @@ class ManifestNotifier extends StateNotifier<ManifestState> {
         errorMessage: 'Falha ao reverter versao de rota: ${e.toString()}',
       );
     }
+  }
+
+  /// Resolve o código para a parada dona SEM efeitos colaterais (não marca
+  /// como carregado). Usado pela validação QR + GPS do card de navegação.
+  /// Retorna null se o código não está no manifesto atual.
+  Future<DeliveryStop?> findStopForBarcode(String barcode) async {
+    final trimmed = barcode.trim();
+    if (trimmed.isEmpty) return null;
+    if (state.currentVersion == null) {
+      final fresh = await _repository.getOrInitCurrentManifest();
+      if (fresh == null) return null;
+      state = state.copyWith(currentVersion: fresh);
+    }
+    final match = await _repository.lookupBarcode(trimmed);
+    if (match == null) return null;
+    return match['stop'] as DeliveryStop;
   }
 
   Future<bool> handleInstantScan(String barcode) async {

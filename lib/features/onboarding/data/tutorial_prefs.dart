@@ -6,7 +6,8 @@ import '../presentation/widgets/coach_tutorial.dart';
 /// momento e nunca mais enche. Versione as chaves (_v1, _v2...) para reexibir.
 class AppTutorial {
   static const String homeSeenKey = 'lifo_coach_home_seen_v1';
-  static const String navSeenKey = 'lifo_coach_nav_seen_v1';
+  // v2: card sem Navegar/Próxima (swipe) + validação QR 150 m.
+  static const String navSeenKey = 'lifo_coach_nav_seen_v2';
 
   static Future<bool> isSeen(String key) async {
     try {

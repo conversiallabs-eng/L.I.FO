@@ -1,16 +1,233 @@
 import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:lifo/core/layout/map_split_layout.dart';
+import 'package:lifo/core/map/map_tiles.dart';
 import 'package:lifo/core/services/hybrid_routing_service.dart';
 import 'package:lifo/core/services/manifest_import_service.dart';
 import 'package:lifo/core/utils/lifo_calculator.dart';
+import 'package:lifo/core/models/route_step.dart';
 import 'package:lifo/features/navigation_map/presentation/widgets/logistics_map_canvas.dart';
 import 'package:lifo/features/route_manifest/domain/models/delivery_stop.dart';
 import 'package:lifo/features/route_manifest/domain/models/package_item.dart';
 import 'package:lifo/features/route_manifest/domain/models/spatial_slot.dart';
 import 'package:lifo/features/route_manifest/domain/models/manifest_version.dart';
+import 'package:lifo/core/utils/route_simplify.dart';
+import 'package:lifo/core/services/app_headers_service.dart';
+import 'package:lifo/core/services/app_update_service.dart';
 
 void main() {
+  group('Map Gesture Tests', () {
+    // Giro por dedo liberado (pedido de uso em campo): `InteractiveFlag.all`
+    // permite pinça com torção girar a câmera. O zoom precisa continuar
+    // funcionando; a rotação por código (moveAndRotate do course-up) não é
+    // afetada por InteractiveFlag.
+    Future<MapController> pumpMap(WidgetTester tester) async {
+      final controller = MapController();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 400,
+              height: 400,
+              child: LogisticsMapCanvas(
+                mapController: controller,
+                initialCenter: const LatLng(-27.6, -48.5),
+                initialZoom: 13,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 50));
+      return controller;
+    }
+
+    testWidgets('Pinch com torção gira o mapa (giro por dedo liberado)',
+        (tester) async {
+      final controller = await pumpMap(tester);
+      final before = controller.camera;
+      expect(before.rotation, 0);
+
+      // Dedos afastando E torcendo: com o giro liberado, este gesto gira.
+      final g1 = await tester.startGesture(const Offset(170, 200));
+      final g2 = await tester.startGesture(const Offset(230, 200));
+      for (var i = 0; i < 8; i++) {
+        await g1.moveBy(const Offset(-6, 8));
+        await g2.moveBy(const Offset(6, -8));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await g1.up();
+      await g2.up();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(
+        controller.camera.rotation.abs(),
+        greaterThan(5),
+        reason: 'pinch com torção tem que girar a câmera',
+      );
+      expect(
+        controller.camera.zoom,
+        greaterThan(before.zoom),
+        reason: 'o zoom por pinch tem que continuar funcionando',
+      );
+    });
+
+    testWidgets('Rotação por código (course-up) continua funcionando',
+        (tester) async {
+      final controller = await pumpMap(tester);
+      expect(controller.camera.rotation, 0);
+
+      // É assim que o modo course-up gira o mapa: pelo controller, não por
+      // gesto. O flag de interação não pode quebrar isso.
+      controller.moveAndRotate(const LatLng(-27.6, -48.5), 15, 45);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(controller.camera.rotation, closeTo(45, 0.01));
+      expect(controller.camera.zoom, closeTo(15, 0.01));
+    });
+
+    testWidgets('Pinch reto também gira 0 e dá zoom', (tester) async {
+      final controller = await pumpMap(tester);
+      final before = controller.camera;
+
+      final g1 = await tester.startGesture(const Offset(180, 200));
+      final g2 = await tester.startGesture(const Offset(220, 200));
+      for (var i = 0; i < 8; i++) {
+        await g1.moveBy(const Offset(-5, 0));
+        await g2.moveBy(const Offset(5, 0));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await g1.up();
+      await g2.up();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(controller.camera.rotation, 0);
+      expect(controller.camera.zoom, greaterThan(before.zoom));
+    });
+  });
+
+  group('Map Split Layout Tests', () {
+    // Paisagem: o card das paradas divide a tela com o mapa (estilo Circuit).
+    test('Painel lateral em paisagem (visão geral e navegação)', () {
+      expect(
+        MapSplitLayout.showsSidePanel(isLandscape: true, isNavigating: false),
+        isTrue,
+      );
+      expect(
+        MapSplitLayout.showsSidePanel(isLandscape: true, isNavigating: true),
+        isTrue,
+      );
+      expect(
+        MapSplitLayout.showsSidePanel(isLandscape: false, isNavigating: false),
+        isFalse,
+      );
+      expect(
+        MapSplitLayout.showsSidePanel(isLandscape: false, isNavigating: true),
+        isFalse,
+      );
+    });
+
+    test('Largura do painel respeita piso e teto', () {
+      // Celular em paisagem (~914 x 412 lógicos): 38% da largura.
+      expect(MapSplitLayout.panelWidth(914), closeTo(347.32, 0.01));
+      // Tela estreita: o painel não vira tira ilegível.
+      expect(MapSplitLayout.panelWidth(360), MapSplitLayout.minPanelWidth);
+      // Tablet: o mapa continua sendo a maior parte da tela.
+      expect(MapSplitLayout.panelWidth(1920), MapSplitLayout.maxPanelWidth);
+
+      // Em qualquer largura real de paisagem o mapa fica com mais da metade.
+      for (final w in [914.0, 1280.0, 1920.0]) {
+        expect(w - MapSplitLayout.panelWidth(w), greaterThan(w / 2),
+            reason: 'mapa tem que sobrar mais da metade em $w');
+      }
+    });
+  });
+
+  group('Map Tiles Tests', () {
+    // Trava a fonte dos tiles: os três endpoints que o app raspava antes e que
+    // causavam bloqueio silencioso (mapa branco) não podem voltar — o mt{s}
+    // do Google é fora do ToS, o tile público do OSM proíbe uso pesado e o
+    // ArcGIS é best-effort.
+    const blockedHosts = [
+      'google.com/vt',
+      'mt0.google.com',
+      'mt1.google.com',
+      'tile.openstreetmap.org',
+      'arcgisonline.com',
+    ];
+
+    test('Nenhuma camada usa host bloqueado ou fora do ToS', () {
+      for (final url in [
+        MapTiles.roads,
+        MapTiles.roadsDark,
+        MapTiles.satellite,
+      ]) {
+        for (final host in blockedHosts) {
+          expect(url.contains(host), isFalse, reason: '$url contém $host');
+        }
+        expect(url.startsWith('https://api.mapbox.com/styles/v1/'), isTrue);
+      }
+    });
+
+    test('Cada camada aponta para o estilo certo e leva o token', () {
+      expect(MapTiles.roads, contains('/streets-v12/'));
+      expect(MapTiles.roadsDark, contains('/dark-v11/'));
+      expect(MapTiles.satellite, contains('/satellite-streets-v12/'));
+
+      for (final url in [
+        MapTiles.roads,
+        MapTiles.roadsDark,
+        MapTiles.satellite,
+      ]) {
+        expect(url, contains('{z}'));
+        expect(url, contains('{x}'));
+        expect(url, contains('{y}'));
+        // {r} é o que vira @2x quando a camada liga retinaMode.
+        expect(url, contains('{r}'));
+        expect(url, contains('access_token=pk.'));
+      }
+    });
+
+    test('Atribuição exigida por licença está preenchida', () {
+      expect(MapTiles.attribution, contains('Mapbox'));
+      expect(MapTiles.attribution, contains('OpenStreetMap'));
+      expect(MapTiles.attributionSatellite, contains('Maxar'));
+    });
+
+    test('Com key CARTO, vias usam basemaps (sem Mapbox nas ruas)', () {
+      MapTiles.setCartoKey('cb1_test_key');
+      try {
+        expect(MapTiles.roads, contains('basemaps.cartocdn.com'));
+        expect(MapTiles.roads, contains('/voyager/'));
+        expect(MapTiles.roads, contains('key=cb1_test_key'));
+        expect(MapTiles.roadsDark, contains('/dark_all/'));
+        expect(MapTiles.roadsDark, contains('key=cb1_test_key'));
+        expect(MapTiles.roads.contains('mapbox'), isFalse);
+        // Satélite continua Mapbox (melhor imagem).
+        expect(MapTiles.satellite, contains('mapbox'));
+        expect(MapTiles.attribution, contains('CARTO'));
+      } finally {
+        MapTiles.setCartoKey(null);
+      }
+      // Sem key: fallback Mapbox (comportamento antigo intacto).
+      expect(MapTiles.roads, contains('/streets-v12/'));
+    });
+
+    test('Token Mapbox rotaciona via servidor (override + reset)', () {
+      MapTiles.setMapboxToken('pk.test_override');
+      try {
+        expect(MapTiles.satellite, contains('pk.test_override'));
+      } finally {
+        MapTiles.setMapboxToken(null);
+      }
+      expect(MapTiles.satellite, contains('access_token=pk.'));
+    });
+  });
+
   group('LIFO Engine & Immutable Versioning Tests', () {
     test(
       'LIFO Spatial Slot mapping conforms strictly to delivery sequence',
@@ -740,6 +957,317 @@ void main() {
       );
       expect(single.center, const LatLng(-27.6, -48.55));
       expect(single.zoom, 16.0);
+    });
+  });
+
+  group('App Headers Tests', () {
+    // Trava mobile da CARTO cobra pacote + SHA-1 do cert. O formato tem que
+    // ser idêntico ao do keytool ("AA:BB:...", maiúsculo), senão 403.
+    test('SHA-1 formata igual ao keytool', () {
+      expect(
+        AppHeadersService.formatCertSha1([0x67, 0xBB, 0x09, 0x00, 0xFF]),
+        '67:BB:09:00:FF',
+      );
+      expect(AppHeadersService.formatCertSha1([]), isEmpty);
+    });
+
+    test('Headers incluem pacote, cert e User-Agent', () async {
+      final h = await AppHeadersService.instance.tileHeaders();
+      expect(h['User-Agent'], contains('LifoApp'));
+      // Em teste (sem canal nativo) ao menos o UA existe e não lança.
+      expect(AppHeadersService.instance.tileHeadersSync['User-Agent'],
+          contains('LifoApp'));
+      AppHeadersService.instance.debugReset();
+    });
+  });
+
+  group('HUD Street Tests', () {
+    // Nome da rua atual sai dos steps da perna (sem rede, sem geocode).
+    RouteStep step(String street) => RouteStep(
+          maneuver: ManeuverType.straight,
+          distanceMeters: 100,
+          streetName: street,
+        );
+
+    test('Rua do último step com nome até o ponto do GPS', () {
+      final steps = [step('Rua A'), step('Rua B'), step('Rua C')];
+      expect(
+        LifoCalculator.streetAtProgress(steps, [0, 50, 120], 60),
+        'Rua B',
+      );
+      expect(
+        LifoCalculator.streetAtProgress(steps, [0, 50, 120], 200),
+        'Rua C',
+      );
+    });
+
+    test('Step sem nome pula para o anterior com nome', () {
+      final steps = [step('Rua A'), step(''), step('Rua C')];
+      expect(
+        LifoCalculator.streetAtProgress(steps, [0, 50, 120], 60),
+        'Rua A',
+      );
+    });
+
+    test('Sem steps ou índices fora retorna null', () {
+      expect(LifoCalculator.streetAtProgress(const [], const [], 0), isNull);
+      final steps = [step('Rua A')];
+      expect(LifoCalculator.streetAtProgress(steps, const [], 0), isNull);
+      expect(LifoCalculator.streetAtProgress(steps, [-1], 99), isNull);
+    });
+  });
+
+  group('Route Simplify Tests', () {
+    // Douglas-Peucker display-only: corta pontos sem mexer no desenho.
+    // A geometria cheia segue no estado/banco/HUD — aqui só o render.
+    List<LatLng> straightLine(int n) => [
+          for (var i = 0; i < n; i++)
+            LatLng(-27.6 + i * 0.00001, -48.5 + i * 0.00001),
+        ];
+
+    test('Reta com 500 pontos colapsa mantendo extremos', () {
+      final pts = straightLine(500);
+      final out = RouteSimplify.douglasPeucker(pts);
+      expect(out.first, pts.first);
+      expect(out.last, pts.last);
+      expect(out.length, lessThan(10));
+    });
+
+    test('Zigue-zague preserva as curvas', () {
+      final pts = <LatLng>[
+        const LatLng(0, 0),
+        const LatLng(0.001, 0.001),
+        const LatLng(0.002, 0), // pico fora da tolerância
+        const LatLng(0.003, 0.001),
+        const LatLng(0.004, 0),
+      ];
+      final out = RouteSimplify.douglasPeucker(
+        pts,
+        toleranceDeg: 0.00001,
+      );
+      // Pico de 0.001° (~111m) sobrevive à tolerância de ~1m.
+      expect(out.length, greaterThan(2));
+      expect(out.first, pts.first);
+      expect(out.last, pts.last);
+    });
+
+    test('Lista curta volta intacta', () {
+      const pts = [LatLng(-27.6, -48.5), LatLng(-27.61, -48.51)];
+      expect(RouteSimplify.douglasPeucker(pts), hasLength(2));
+      expect(RouteSimplify.douglasPeucker(const []), isEmpty);
+    });
+  });
+
+  group('Card arrastável: AnimatedSwitcher da troca de parada', () {
+    // Config idêntica à do card de navegação (home_dashboard_screen). O
+    // overshoot mora DENTRO do transitionBuilder — nunca no switchInCurve,
+    // porque o switcher entrega ao builder a animação JÁ curvada e o t
+    // estoura 1.0 (assert → ErrorWidget vermelho durante o swipe).
+    Future<void> pumpSwitcher(WidgetTester tester, String stopId) {
+      return tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: Align(
+              alignment: Alignment.bottomCenter,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 400),
+                switchInCurve: Curves.easeOut,
+                switchOutCurve: Curves.easeInCubic,
+                transitionBuilder: (child, animation) {
+                  return FadeTransition(
+                    opacity: animation,
+                    child: ScaleTransition(
+                      scale: Tween<double>(begin: 0.95, end: 1.0).animate(
+                        CurvedAnimation(
+                          parent: animation,
+                          curve: Curves.easeOutBack,
+                        ),
+                      ),
+                      child: child,
+                    ),
+                  );
+                },
+                child: SizedBox(
+                  key: ValueKey(stopId),
+                  width: 200,
+                  height: 100,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('Troca de parada anima com overshoot sem tela vermelha',
+        (tester) async {
+      await pumpSwitcher(tester, 'parada_1');
+      await tester.pumpAndSettle();
+
+      // Swipe para a próxima parada: o card troca de chave e anima.
+      await pumpSwitcher(tester, 'parada_2');
+
+      double maxScale = 0.0;
+      for (var i = 0; i < 25; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        for (final s
+            in tester.widgetList<ScaleTransition>(find.byType(ScaleTransition))) {
+          if (s.scale.value > maxScale) maxScale = s.scale.value;
+        }
+      }
+
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'curva com overshoot no switchInCurve estoura t em [0,1]',
+      );
+      expect(
+        maxScale,
+        greaterThan(1.0),
+        reason: 'o card tem que continuar com o pulo do overshoot ao trocar',
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+
+    test('Nenhuma tela usa curva com overshoot em switchInCurve/switchOutCurve',
+        () {
+      // Guarda de fonte: o assert só acontece em debug (tela vermelha), mas o
+      // efeito em release (alpha > 255, escala torta) também é errado. O
+      // overshoot tem que ficar no transitionBuilder, onde t já é <= 1.
+      final overshootSwitchCurve = RegExp(
+        r'switch(In|Out)Curve:\s*Curves\.(easeOutBack|easeInBack|'
+        r'easeOutElastic|easeInElastic|easeOutBounce|easeInBounce)',
+      );
+      final offenders = <String>[];
+      for (final entity in Directory('lib').listSync(recursive: true)) {
+        if (entity is! File || !entity.path.endsWith('.dart')) continue;
+        if (overshootSwitchCurve.hasMatch(entity.readAsStringSync())) {
+          offenders.add(entity.path);
+        }
+      }
+      expect(offenders, isEmpty, reason: 'use o overshoot no transitionBuilder');
+    });
+  });
+
+  group('Atualização do app (nunca baixa a versão já instalada)', () {
+    test('Compara versões campo a campo (com lacunas)', () {
+      expect(AppUpdateService.compareVersions('1.0.1', '1.0.0'), 1);
+      expect(AppUpdateService.compareVersions('1.0.0', '1.0.1'), -1);
+      expect(AppUpdateService.compareVersions('1.0.0', '1.0.0'), 0);
+      expect(AppUpdateService.compareVersions('1.0', '1.0.0'), 0);
+      expect(AppUpdateService.compareVersions('1.0.0', '1.0'), 0);
+      expect(AppUpdateService.compareVersions('1.2', '1.10'), -1);
+      expect(AppUpdateService.compareVersions('2.0.0', '1.99.99'), 1);
+      // Campo não numérico conta como 0 — nunca lança.
+      expect(AppUpdateService.compareVersions('1.beta', '1.0'), 0);
+      expect(AppUpdateService.compareVersions('', '0.0.0'), 0);
+    });
+
+    // Regra do campo: só não baixar o que JÁ está instalado. Nome ou build
+    // diferentes = oferece (inclusive rebuild e rollback).
+    bool differs(
+      String rv,
+      int rb,
+      String iv,
+      int ib,
+    ) =>
+        AppUpdateService.differsFromInstalled(
+          remoteVersion: rv,
+          remoteBuild: rb,
+          installedVersion: iv,
+          installedBuild: ib,
+        );
+
+    test('Rebuild do mesmo release (nome igual, build novo) vira oferta', () {
+      expect(differs('1.0.0', 2, '1.0.0', 1), isTrue);
+    });
+
+    test('Nome novo vira oferta mesmo com build igual', () {
+      expect(differs('1.0.1', 1, '1.0.0', 1), isTrue);
+    });
+
+    test('Rollback publicado também é oferecido (quem decide é o Android)', () {
+      expect(differs('1.0.0', 1, '1.0.1', 2), isTrue);
+    });
+
+    test('Mesma versão E mesmo build não vira oferta', () {
+      expect(differs('1.0.0', 1, '1.0.0', 1), isFalse);
+      // "1.0" x "1.0.0" é o mesmo número: oferecer download daria
+      // "app já instalado" no Android.
+      expect(differs('1.0', 1, '1.0.0', 1), isFalse);
+      expect(differs('1.0.0', 0, '1.0', 0), isFalse);
+    });
+
+    test('Só a publicada mais antiga dispara o aviso de versão anterior', () {
+      bool older(String rv, int rb, String iv, int ib) =>
+          AppUpdateService.isOlder(
+            remoteVersion: rv,
+            remoteBuild: rb,
+            installedVersion: iv,
+            installedBuild: ib,
+          );
+
+      expect(older('1.0.0', 1, '1.0.1', 2), isTrue);
+      expect(older('1.0.0', 1, '1.0.0', 2), isTrue);
+      expect(older('1.0.1', 2, '1.0.0', 1), isFalse);
+      expect(older('1.0.0', 1, '1.0.0', 1), isFalse);
+    });
+
+    test('app_config sem as chaves de release = nada publicado', () {
+      // Estado real do servidor antes do 1º release: só carto_key/mapbox_token.
+      // A consulta volta vazia — isso é ausência de publicação, não internet.
+      final rows = <Map<String, String>>[
+        {'key': 'carto_key', 'value': 'x'},
+        {'key': 'mapbox_token', 'value': 'y'},
+      ];
+      final map = {for (final r in rows) r['key']: r['value']};
+      expect(
+        AppRelease.fromJson({
+          'version': map['latest_version'] ?? '',
+          'build': int.tryParse(map['latest_build'] ?? '') ?? 0,
+          'apk_url': map['apk_url'] ?? '',
+          'notes': map['release_notes'] ?? '',
+        }),
+        isNull,
+      );
+    });
+
+    test('Registro incompleto não vira oferta de update', () {
+      expect(AppRelease.fromJson(const {}), isNull);
+      expect(
+        AppRelease.fromJson(const {'version': '1.0.1', 'apk_url': '  '}),
+        isNull,
+        reason: 'sem URL não há o que baixar',
+      );
+      expect(
+        AppRelease.fromJson(const {'version': '', 'apk_url': 'https://x/l.apk'}),
+        isNull,
+      );
+      final ok = AppRelease.fromJson(const {
+        'version': '1.0.1',
+        'build': '2',
+        'apk_url': 'https://lifo.com.br/lifo.apk',
+        'notes': ' Correções ',
+      });
+      expect(ok, isNotNull);
+      expect(ok!.version, '1.0.1');
+      expect(ok.build, 2);
+      expect(ok.apkUrl, 'https://lifo.com.br/lifo.apk');
+      expect(ok.notes, 'Correções');
+    });
+
+    test('Todo campo lido pelo app é publicado pelo SQL de release', () {
+      // Guarda de contrato: o SQL é quem grava o release, o app é quem lê.
+      // Renomear uma chave de um lado só deixa a bolhinha morta em silêncio.
+      final sql = File('supabase/release_apk.sql').readAsStringSync();
+      for (final key in AppUpdateService.configKeys) {
+        expect(
+          sql.contains("'$key'"),
+          isTrue,
+          reason: 'release_apk.sql precisa publicar a chave $key',
+        );
+      }
     });
   });
 }

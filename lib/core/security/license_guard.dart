@@ -130,6 +130,14 @@ class OfflineLicenseGuard {
     await prefs.setInt(_kLastMonotonicClockKey, DateTime.now().millisecondsSinceEpoch);
   }
 
+  /// Apaga o token local (revogação: abuso detectado pelo servidor).
+  static Future<void> clearLicenseToken() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_kLicenseTokenKey);
+    } catch (_) {}
+  }
+
   static String _generateSignature(String data, String key) {
     final hmac = Hmac(sha256, utf8.encode(key));
     return base64Url.encode(hmac.convert(utf8.encode(data)).bytes);

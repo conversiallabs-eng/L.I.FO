@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
@@ -32,6 +33,7 @@ import '../../../auth/presentation/screens/create_account_screen.dart';
 import '../../../auth/presentation/screens/my_account_screen.dart';
 import '../../../auth/presentation/screens/subscription_renewal_screen.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
+import '../../../auth/presentation/screens/legal_document_screen.dart';
 import '../../../auth/presentation/widgets/google_sign_in_button.dart';
 import '../../../onboarding/data/tutorial_prefs.dart';
 import '../../../onboarding/presentation/widgets/coach_tutorial.dart';
@@ -39,6 +41,10 @@ import '../../../offline_maps/presentation/screens/offline_maps_screen.dart';
 import '../../../../core/services/offline_map_service.dart';
 import '../../../../core/network/connectivity_service.dart';
 import '../../../../core/network/net_guard.dart';
+import '../../../../core/services/app_update_service.dart';
+
+/// Resultado da validação QR + GPS do card de navegação.
+enum _QrCheck { none, ok, far, other, unknown, noGps }
 
 class HomeDashboardScreen extends ConsumerStatefulWidget {
   const HomeDashboardScreen({super.key});
@@ -195,6 +201,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   }
 
   void _advanceToNextStop(List<DeliveryStop> stops) {
+    if (stops.isEmpty) return;
     final nextIdx = (_selectedStopIndex + 1 < stops.length) ? _selectedStopIndex + 1 : _selectedStopIndex;
     if (nextIdx != _selectedStopIndex) {
       HapticFeedback.lightImpact();
@@ -205,23 +212,28 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         setState(() {
           _selectedStopIndex = nextIdx;
           _cardDragDx = screenW;
+          _scannedStop = null;
+          _scannedBarcode = null;
+          _verifyResult = _QrCheck.none;
         });
-        if (stops[nextIdx].status == StopStatus.pending) {
+        if (nextIdx < stops.length && stops[nextIdx].status == StopStatus.pending) {
           ref.read(manifestControllerProvider.notifier).updateStopStatus(
             stops[nextIdx].id,
             StopStatus.inTransit,
           );
         }
-        _startInAppNavigation(stops[nextIdx]);
+        if (nextIdx < stops.length) {
+          _startInAppNavigation(stops[nextIdx]);
+        }
         _animateCardDragTo(0.0, duration: const Duration(milliseconds: 220), curve: Curves.easeOutCubic);
       });
     } else {
-      // Já está na última parada -> mola elástica de volta ao centro
       _animateCardDragTo(0.0, duration: const Duration(milliseconds: 240), curve: Curves.easeOutBack);
     }
   }
 
   void _goToPreviousStop(List<DeliveryStop> stops) {
+    if (stops.isEmpty) return;
     final prevIdx = (_selectedStopIndex > 0) ? _selectedStopIndex - 1 : 0;
     if (prevIdx != _selectedStopIndex) {
       HapticFeedback.lightImpact();
@@ -232,12 +244,16 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         setState(() {
           _selectedStopIndex = prevIdx;
           _cardDragDx = -screenW;
+          _scannedStop = null;
+          _scannedBarcode = null;
+          _verifyResult = _QrCheck.none;
         });
-        _startInAppNavigation(stops[prevIdx]);
+        if (prevIdx < stops.length) {
+          _startInAppNavigation(stops[prevIdx]);
+        }
         _animateCardDragTo(0.0, duration: const Duration(milliseconds: 220), curve: Curves.easeOutCubic);
       });
     } else {
-      // Já está na primeira parada -> mola elástica de volta ao centro
       _animateCardDragTo(0.0, duration: const Duration(milliseconds: 240), curve: Curves.easeOutBack);
     }
   }
@@ -378,6 +394,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     );
     _mapController = MapController();
     _fetchCurrentLocation();
+    // Bolhinha de atualização: checa a versão publicada no servidor sem
+    // segurar o boot (offline cai no último resultado conhecido).
+    unawaited(AppUpdateService.instance.checkForUpdate());
     // Card começa no piso (cabeçalho + botão inteiros, sem lista): o
     // usuário levanta se quiser. Só na 1ª montagem e sem toque anterior.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -424,6 +443,22 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   final GlobalKey _coachSpeakerKey = GlobalKey();
   final GlobalKey _coachHudKey = GlobalKey();
   final GlobalKey _coachCardKey = GlobalKey();
+  final GlobalKey _coachQrKey = GlobalKey();
+
+  // ─── VALIDAÇÃO QR + GPS (PiP sob demanda) ─────────────────────────────
+  // Toque no RASTREIO ou no botão da coluna abre uma janelinha de câmera.
+  // Bipou → confere código + distância de 150 m. Nunca trava a entrega.
+  bool _qrPipOpen = false;
+  MobileScannerController? _qrPipController;
+  bool _qrBusy = false;
+  String _lastQrCode = '';
+  DateTime? _lastQrAt;
+  String? _verifiedStopId;
+  _QrCheck _verifyResult = _QrCheck.none;
+  double _verifyDistanceM = 0;
+  int _verifiedOtherSeq = 0;
+  DeliveryStop? _scannedStop;
+  String? _scannedBarcode;
 
   Future<void> _startHomeCoach({bool force = false}) async {
     if (!mounted) return;
@@ -517,7 +552,13 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         targetKey: _coachCardKey,
         title: 'Card arrastável',
         body:
-            'Arraste o card para o lado para trocar de parada. Os botões concluem, pulam ou reabrem a entrega.',
+            'Arraste o card para o lado para trocar de parada. Concluir aqui avança sozinho para a próxima.',
+      ),
+      CoachStep(
+        targetKey: _coachQrKey,
+        title: 'Bipar no ponto',
+        body:
+            'Toque no rastreio ou aqui na câmera para bipar a etiqueta. O app confere o código e a distância de 150 m. Fora do ponto, a entrega segue liberada.',
       ),
     ]);
     if (mounted) _showManeuverHud();
@@ -791,6 +832,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     _livePin.dispose();
     _liveHeading.dispose();
     _gpsTick.dispose();
+    _qrPipController?.dispose();
     // NÃO TRAVAR A ORIENTAÇÃO — mantém livre ao sair da tela; não voltar a portraitOnly.
     SystemChrome.setPreferredOrientations(_landscapeAllowed);
     super.dispose();
@@ -1063,6 +1105,136 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         _startInAppNavigation(stops[listIdx], forceFollow: true);
       }
     }
+  }
+
+  /// Abre/fecha a janelinha de câmera (PiP sob demanda). Fecha sozinha
+  /// após bipar — o resultado fica registrado no card.
+  void _toggleQrPip({bool? open}) {
+    final next = open ?? !_qrPipOpen;
+    if (next == _qrPipOpen) return;
+    if (next) {
+      _qrPipController?.dispose();
+      _qrPipController = MobileScannerController(
+        detectionSpeed: DetectionSpeed.normal,
+        facing: CameraFacing.back,
+        torchEnabled: false,
+      );
+      _qrBusy = false;
+      _lastQrCode = '';
+      _lastQrAt = null;
+    } else {
+      _qrPipController?.dispose();
+      _qrPipController = null;
+      _qrBusy = false;
+    }
+    if (mounted) setState(() => _qrPipOpen = next);
+  }
+
+  void _onQrPipDetect(BarcodeCapture capture) {
+    if (!_qrPipOpen || _qrBusy) return;
+    final barcodes = capture.barcodes;
+    if (barcodes.isEmpty) return;
+    final raw = barcodes.first.rawValue;
+    if (raw == null || raw.trim().isEmpty) return;
+    final code = raw.trim();
+    final now = DateTime.now();
+    if (code == _lastQrCode &&
+        _lastQrAt != null &&
+        now.difference(_lastQrAt!).inMilliseconds < 1200) {
+      return;
+    }
+    _lastQrCode = code;
+    _lastQrAt = now;
+    _qrBusy = true;
+    _runQrCheck(code);
+  }
+
+  /// Confere o código bipado contra a parada atual + distância do GPS.
+  /// Nunca bloqueia: só registra o status exibido no card.
+  Future<void> _runQrCheck(String code) async {
+    final stops =
+        ref.read(manifestControllerProvider).currentVersion?.stops ?? [];
+    if (stops.isEmpty || !mounted) {
+      _qrBusy = false;
+      return;
+    }
+    final curIdx = _selectedStopIndex.clamp(0, stops.length - 1);
+    final current = stops[curIdx];
+    final norm = code.trim().toUpperCase();
+    final ownCodes = current.packages
+        .map((p) => p.barcode.trim().toUpperCase())
+        .where((b) => b.isNotEmpty)
+        .toSet();
+
+    _QrCheck result;
+    double dist = 0;
+    int otherSeq = 0;
+    DeliveryStop? ownerStop;
+
+    if (ownCodes.contains(norm)) {
+      final gps = _currentLocation ?? _livePin.value;
+      if (gps == null) {
+        result = _QrCheck.noGps;
+      } else {
+        dist = LifoCalculator.calculateDistanceMeters(
+          gps.latitude,
+          gps.longitude,
+          current.latitude,
+          current.longitude,
+        );
+        result = dist <= LifoCalculator.locationGateMeters
+            ? _QrCheck.ok
+            : _QrCheck.far;
+      }
+    } else {
+      ownerStop = await ref
+          .read(manifestControllerProvider.notifier)
+          .findStopForBarcode(norm);
+      if (!mounted) {
+        _qrBusy = false;
+        return;
+      }
+      if (ownerStop != null) {
+        otherSeq = ownerStop.sequenceIndex;
+        final gps = _currentLocation ?? _livePin.value;
+        if (gps != null) {
+          dist = LifoCalculator.calculateDistanceMeters(
+            gps.latitude,
+            gps.longitude,
+            ownerStop.latitude,
+            ownerStop.longitude,
+          );
+        }
+        result = _QrCheck.other;
+      } else {
+        result = _QrCheck.unknown;
+      }
+    }
+
+    HapticFeedback.mediumImpact();
+    if (!mounted) {
+      _qrBusy = false;
+      return;
+    }
+    setState(() {
+      _verifiedStopId = ownerStop?.id ?? current.id;
+      _verifyResult = result;
+      _verifyDistanceM = dist;
+      _verifiedOtherSeq = otherSeq;
+      _scannedStop = ownerStop;
+      _scannedBarcode = norm;
+      
+      // Se encontrou a parada (mesmo que seja outra), "chama" o card dela
+      if (ownerStop != null) {
+        final idx = stops.indexWhere((s) => s.id == ownerStop!.id);
+        if (idx != -1) {
+          _selectedStopIndex = idx;
+        }
+      }
+    });
+    // Sob demanda: fecha a janelinha após bipar, status permanece no card.
+    _toggleQrPip(open: false);
+    _qrBusy = false;
   }
 
   void _openVehicleBayModal() {
@@ -1977,8 +2149,19 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         ? LatLng(stops.first.latitude, stops.first.longitude)
         : (_currentLocation ?? const LatLng(-14.2350, -51.9253));
 
-    final curIdx = _selectedStopIndex.clamp(0, stops.isNotEmpty ? stops.length - 1 : 0);
-    final targetStop = stops.isNotEmpty ? stops[curIdx] : null;
+    final curIdx = (stops.isNotEmpty) 
+        ? _selectedStopIndex.clamp(0, stops.length - 1) 
+        : 0;
+    final DeliveryStop? targetStop = (stops.isNotEmpty && curIdx < stops.length) 
+        ? stops[curIdx] 
+        : null;
+
+    if (_isNavigating && stops.isEmpty) {
+      // Proteção contra erro de renderização se o estado de navegação estiver ativo mas a lista vazia
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _isNavigating = false);
+      });
+    }
 
     // Se estiver navegando e mudou a parada alvo, busca traçado até ela
     if (_isNavigating && targetStop != null && _currentLocation != null && _lastLegTargetStopId != targetStop.id) {
@@ -2065,6 +2248,19 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         tooltip: 'Minha Localização GPS',
         onTap: () => _onGpsButtonPressed(stops),
       ),
+      if (_isNavigating)
+        Container(
+          key: _coachQrKey,
+          child: _buildFloatingCircleButton(
+            context: context,
+            icon: _qrPipOpen
+                ? Icons.qr_code_scanner_rounded
+                : Icons.qr_code_2_rounded,
+            tooltip: 'Bipar etiqueta do ponto',
+            isActive: _qrPipOpen,
+            onTap: () => _toggleQrPip(),
+          ),
+        ),
       Container(
         key: _coachArrowKey,
         child: _buildFloatingCircleButton(
@@ -2149,84 +2345,98 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
               ),
             ),
 
-            // 3. TOP FLOATING CONTROLS (Ancorados no topo com Positioned e
-            // limitados à largura do mapa quando o painel lateral está visível)
+            // 3. BOTÃO DE MENU (Posicionado de forma independente para estabilidade total)
             Positioned(
               top: 0,
-              left: (_isNavigating && stops.isNotEmpty) ? 0.0 : panelWidth,
-              right: 0,
+              left: 0,
               child: SafeArea(
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        key: _coachDrawerKey,
-                        child: _buildFloatingCircleButton(
-                          context: context,
-                          icon: Icons.menu,
-                          onTap: () => _scaffoldKey.currentState?.openDrawer(),
-                        ),
+                  padding: const EdgeInsets.only(left: 16, top: 10),
+                  child: Container(
+                    key: _coachDrawerKey,
+                    child: ValueListenableBuilder<AppRelease?>(
+                      valueListenable: AppUpdateService.instance.availableUpdate,
+                      builder: (context, release, _) =>
+                          _buildFloatingCircleButton(
+                        context: context,
+                        icon: Icons.menu,
+                        tooltip: release == null
+                            ? 'Menu'
+                            : 'Atualização disponível: ${release.version}',
+                        badgeCount: release == null ? 0 : 1,
+                        onTap: () => _scaffoldKey.currentState?.openDrawer(),
                       ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
 
-                      if (_isNavigating && targetStop != null)
-                        Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 8),
-                            child: IgnorePointer(
-                              ignoring: !_hudVisible,
-                              child: AnimatedOpacity(
-                                opacity: _hudVisible ? 1.0 : 0.0,
-                                duration: const Duration(milliseconds: 350),
-                                curve: Curves.easeInOut,
-                                child: GestureDetector(
-                                  onTap: () {
-                                    HapticFeedback.lightImpact();
-                                    _showManeuverHud();
-                                    _animatedMapMove(
-                                      LatLng(targetStop.latitude, targetStop.longitude),
-                                      16.5,
-                                      durationMs: 600,
-                                    );
-                                  },
-                                  child: Container(
-                                    key: _coachHudKey,
-                                    // Fase 1a: texto do HUD (distância) atualiza
-                                    // por fix sem rebuild da tela.
-                                    child: ValueListenableBuilder<int>(
-                                      valueListenable: _gpsTick,
-                                      builder: (context, _, _) =>
-                                          _buildManeuverHud(
-                                              targetStop: targetStop),
-                                    ),
-                                  ),
-                                ),
+            // 4. HUD DE MANOBRA (Centralização absoluta no topo sem interferência lateral)
+            if (_isNavigating && targetStop != null)
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: SafeArea(
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          maxWidth: media.size.width - (splitPanel ? panelWidth + 140 : 140),
+                        ),
+                        child: IgnorePointer(
+                          ignoring: !_hudVisible,
+                          child: AnimatedOpacity(
+                            opacity: _hudVisible ? 1.0 : 0.0,
+                            duration: const Duration(milliseconds: 350),
+                            curve: Curves.easeInOut,
+                            child: GestureDetector(
+                              onTap: () {
+                                HapticFeedback.lightImpact();
+                                _showManeuverHud();
+                                _animatedMapMove(
+                                  LatLng(targetStop.latitude, targetStop.longitude),
+                                  16.5,
+                                  durationMs: 600,
+                                );
+                              },
+                              child: ValueListenableBuilder<int>(
+                                valueListenable: _gpsTick,
+                                builder: (context, _, _) =>
+                                    _buildManeuverHud(targetStop: targetStop),
                               ),
                             ),
                           ),
-                        )
-                      else
-                        const Spacer(),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
 
-                      // Controles do mapa sempre visíveis, empilhados na vertical
-                      // (retrato e paisagem).
-                      Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          for (final botao in mapControlButtons) ...[
-                            botao,
-                            const SizedBox(height: 10),
-                          ],
-                          // Fase 1a: pílula ouve o fix (aparece no 1º fix
-                          // sem rebuild da tela).
-                          ValueListenableBuilder<LatLng?>(
-                            valueListenable: _livePin,
-                            builder: (context, pin, _) => pin == null
-                                ? const SizedBox.shrink()
-                                : _buildSpeedPill(context),
-                          ),
-                        ],
+            // 5. CONTROLES DO MAPA (Lado direito, verticalmente empilhados)
+            Positioned(
+              top: 0,
+              right: 0,
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 16, top: 10),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      for (final botao in mapControlButtons) ...[
+                        botao,
+                        const SizedBox(height: 10),
+                      ],
+                      // Pílula de velocidade
+                      ValueListenableBuilder<LatLng?>(
+                        valueListenable: _livePin,
+                        builder: (context, pin, _) => pin == null
+                            ? const SizedBox.shrink()
+                            : _buildSpeedPill(context),
                       ),
                     ],
                   ),
@@ -2234,19 +2444,42 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
               ),
             ),
 
-            // 3. NAVEGAÇÃO ATIVA — Card flutuante e arrastável em retrato e paisagem (compacto no modo horizontal).
-            if (_isNavigating && stops.isNotEmpty)
+            // 6. SCANNER PIP (Lado direito, ao lado dos botões sem cobri-los)
+            Positioned(
+              top: 92,
+              right: 74, // Offset para ficar à esquerda da coluna de botões (46px botão + padding)
+              child: SafeArea(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300),
+                  transitionBuilder: (Widget child, Animation<double> animation) {
+                    return FadeTransition(
+                      opacity: animation,
+                      child: ScaleTransition(
+                        scale: Tween<double>(begin: 0.8, end: 1.0).animate(
+                          CurvedAnimation(parent: animation, curve: Curves.easeOutBack),
+                        ),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: _qrPipOpen
+                      ? _buildQrPip(context)
+                      : const SizedBox.shrink(),
+                ),
+              ),
+            ),
+
+            // 3. NAVEGAÇÃO ATIVA — Card flutuante e arrastável
+            if (_isNavigating && stops.isNotEmpty && curIdx < stops.length)
               Positioned(
-                key: _coachCardKey,
+                key: const ValueKey('nav_card_container_stable'),
                 left: isLandscape ? 16 : 14,
                 right: isLandscape ? null : 14,
                 width: isLandscape ? (media.size.width * 0.42).clamp(310.0, 360.0) : null,
                 bottom: 12 + media.padding.bottom,
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
-                  onHorizontalDragStart: (_) {
-                    _cardDragAnimController.stop();
-                  },
+                  onHorizontalDragStart: (_) => _cardDragAnimController.stop(),
                   onHorizontalDragUpdate: (details) {
                     setState(() {
                       _cardDragDx += details.delta.dx;
@@ -2266,122 +2499,140 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                     offset: Offset(_cardDragDx, 0),
                     child: Transform.rotate(
                       angle: (_cardDragDx / 3200).clamp(-0.05, 0.05),
-                      child: _buildActiveNavigationCard(
-                        isDark: isDark,
-                        isSidePanel: false,
-                        stop: stops[_selectedStopIndex.clamp(0, stops.length - 1)],
-                        currentIndex: _selectedStopIndex.clamp(0, stops.length - 1),
-                        totalStops: stops.length,
-                        timeLabel: _stopTimeLabel(
-                          index: _selectedStopIndex.clamp(0, stops.length - 1),
-                          stop: stops[_selectedStopIndex.clamp(0, stops.length - 1)],
-                          arrivalOffsets: manifestState.arrivalOffsets,
-                          routeComputedAt: manifestState.routeComputedAt,
-                          isOnlineRouting: manifestState.isOnlineRouting,
-                        ),
-                        onNavigate: () {
-                          final curIdx = _selectedStopIndex.clamp(0, stops.length - 1);
-                          final curStop = stops[curIdx];
-                          if (curStop.status == StopStatus.completed ||
-                              curStop.status == StopStatus.failed) {
-                            final nextIdx = _nextPendingIndex(stops);
-                            if (nextIdx > curIdx) {
-                              _advanceToNextStop(stops);
-                            } else if (nextIdx < curIdx) {
-                              _goToPreviousStop(stops);
-                            } else {
-                              _startInAppNavigation(stops[nextIdx], forceFollow: true);
-                            }
-                          } else {
-                            _startInAppNavigation(curStop, forceFollow: true);
-                          }
-                        },
-                        onNext: () => _advanceToNextStop(stops),
-                        onPrevious: () => _goToPreviousStop(stops),
-                        onMarkFailed: () {
-                          final curIdx = _selectedStopIndex.clamp(0, stops.length - 1);
-                          final isCurrentlyFailed = stops[curIdx].status == StopStatus.failed;
-                          final newStatus = isCurrentlyFailed ? StopStatus.pending : StopStatus.failed;
-                          ref.read(manifestControllerProvider.notifier).updateStopStatus(
-                            stops[curIdx].id,
-                            newStatus,
-                          );
-                          if (!isCurrentlyFailed) {
-                            _advanceToNextStop(stops);
-                          }
-                        },
-                        onMarkCompleted: () {
-                          final curIdx = _selectedStopIndex.clamp(0, stops.length - 1);
-                          final isCurrentlyCompleted = stops[curIdx].status == StopStatus.completed;
-                          final newStatus = isCurrentlyCompleted ? StopStatus.pending : StopStatus.completed;
-                          ref.read(manifestControllerProvider.notifier).updateStopStatus(
-                            stops[curIdx].id,
-                            newStatus,
-                          );
-                          if (!isCurrentlyCompleted) {
-                            final allDone = stops.every((s) => s.id == stops[curIdx].id || s.status == StopStatus.completed);
-                            if (allDone) {
-                              _autoRecenteringTimer?.cancel();
-                              _autoRecenteringTimer = null;
-                              _hudHideTimer?.cancel();
-                              VoiceGuidance.instance.stop();
-                              setState(() {
-                                _isNavigating = false;
-                                _autoRecenterArmed = false;
-                                _courseUp = false;
-                                _hudVisible = false;
-                                _cardDragDx = 0.0;
-                              });
-                              _animatedMapMove(_mapController.camera.center, _mapController.camera.zoom, destRotation: 0, durationMs: 400);
-                            } else {
-                              _advanceToNextStop(stops);
-                            }
-                            ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(allDone
-                                    ? 'TODAS AS PARADAS ENTREGUES!'
-                                    : 'Parada #${stops[curIdx].sequenceIndex} ENTREGUE! Avançando para a próxima...'),
-                                duration: const Duration(seconds: 2),
-                                backgroundColor: const Color(0xFF16A34A),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 400),
+                        // NUNCA usar curva com overshoot aqui (easeOutBack & cia):
+                        // o AnimatedSwitcher entrega ao transitionBuilder a
+                        // animação JÁ curvada, e o t passa de 1.0. Quem consome
+                        // (CurvedAnimation/FadeTransition/Opacity) exige t em
+                        // [0,1] → assert + tela vermelha durante a troca de
+                        // parada. O overshoot mora DENTRO do transitionBuilder,
+                        // onde t ainda é <= 1.
+                        switchInCurve: Curves.easeOut,
+                        switchOutCurve: Curves.easeInCubic,
+                        transitionBuilder: (child, animation) {
+                          return FadeTransition(
+                            opacity: animation,
+                            child: ScaleTransition(
+                              scale: Tween<double>(begin: 0.95, end: 1.0).animate(
+                                CurvedAnimation(parent: animation, curve: Curves.easeOutBack),
                               ),
-                            );
-                          }
-                        },
-                        onUndo: () {
-                          final curIdx = _selectedStopIndex.clamp(0, stops.length - 1);
-                          final curStop = stops[curIdx];
-                          ref.read(manifestControllerProvider.notifier).updateStopStatus(
-                            curStop.id,
-                            StopStatus.pending,
-                          );
-                          HapticFeedback.mediumImpact();
-                          SystemSound.play(SystemSoundType.click);
-                          setState(() {});
-                          ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('Parada #${curStop.sequenceIndex} desfeita! Status retornado para pendente.'),
-                              duration: const Duration(seconds: 2),
-                              backgroundColor: const Color(0xFF2563EB),
+                              child: child,
                             ),
                           );
                         },
-                        onClose: () {
-                          _autoRecenteringTimer?.cancel();
-                          _autoRecenteringTimer = null;
-                          _hudHideTimer?.cancel();
-                          VoiceGuidance.instance.stop();
-                          setState(() {
-                            _isNavigating = false;
-                            _autoRecenterArmed = false;
-                            _courseUp = false;
-                            _hudVisible = false;
-                            _cardDragDx = 0.0;
-                            _lastAutoScrolledIndex = null;
-                          });
-                          _animatedMapMove(_mapController.camera.center, _mapController.camera.zoom, destRotation: 0, durationMs: 400);
-                        },
+                        child: _buildActiveNavigationCard(
+                          key: ValueKey('active_card_${targetStop?.id ?? "none"}'),
+                          isDark: isDark,
+                          isSidePanel: false,
+                          stop: targetStop!, // Já garantido pelo 'if' do Positioned
+                          currentIndex: curIdx,
+                          totalStops: stops.length,
+                          timeLabel: _stopTimeLabel(
+                            index: curIdx,
+                            stop: targetStop!,
+                            arrivalOffsets: manifestState.arrivalOffsets,
+                            routeComputedAt: manifestState.routeComputedAt,
+                            isOnlineRouting: manifestState.isOnlineRouting,
+                          ),
+                          onMarkFailed: () {
+                            if (stops.isEmpty || curIdx >= stops.length) return;
+                            final isCurrentlyFailed = targetStop!.status == StopStatus.failed;
+                            final newStatus = isCurrentlyFailed ? StopStatus.pending : StopStatus.failed;
+                            ref.read(manifestControllerProvider.notifier).updateStopStatus(
+                              targetStop.id,
+                              newStatus,
+                            );
+                            if (!isCurrentlyFailed) {
+                              _advanceToNextStop(stops);
+                            }
+                          },
+                          onMarkCompleted: () {
+                            if (stops.isEmpty || curIdx >= stops.length) return;
+                            final isCurrentlyCompleted = targetStop!.status == StopStatus.completed;
+                            final newStatus = isCurrentlyCompleted ? StopStatus.pending : StopStatus.completed;
+                            ref.read(manifestControllerProvider.notifier).updateStopStatus(
+                              targetStop.id,
+                              newStatus,
+                            );
+                            if (!isCurrentlyCompleted) {
+                              final allDone = stops.every((s) => s.id == targetStop.id || s.status == StopStatus.completed);
+                              if (allDone) {
+                                _autoRecenteringTimer?.cancel();
+                                _autoRecenteringTimer = null;
+                                _hudHideTimer?.cancel();
+                                VoiceGuidance.instance.stop();
+                                setState(() {
+                                  _isNavigating = false;
+                                  _autoRecenterArmed = false;
+                                  _courseUp = false;
+                                  _hudVisible = false;
+                                  _cardDragDx = 0.0;
+                                  _scannedStop = null;
+                                  _scannedBarcode = null;
+                                  _verifyResult = _QrCheck.none;
+                                });
+                                _animatedMapMove(_mapController.camera.center, _mapController.camera.zoom, destRotation: 0, durationMs: 400);
+                              } else {
+                                _advanceToNextStop(stops);
+                              }
+                              ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(allDone
+                                      ? 'TODAS AS PARADAS ENTREGUES!'
+                                      : 'Parada #${targetStop.sequenceIndex} ENTREGUE! Avançando para a próxima...'),
+                                  duration: const Duration(seconds: 2),
+                                  backgroundColor: const Color(0xFF16A34A),
+                                ),
+                              );
+                            }
+                          },
+                          onUndo: () {
+                            if (stops.isEmpty || curIdx >= stops.length) return;
+                            final curStop = targetStop!;
+                            ref.read(manifestControllerProvider.notifier).updateStopStatus(
+                              curStop.id,
+                              StopStatus.pending,
+                            );
+                            HapticFeedback.mediumImpact();
+                            SystemSound.play(SystemSoundType.click);
+                            setState(() {});
+                            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Parada #${curStop.sequenceIndex} desfeita! Status retornado para pendente.'),
+                                duration: const Duration(seconds: 2),
+                                backgroundColor: const Color(0xFF2563EB),
+                              ),
+                            );
+                          },
+                          onClose: () {
+                            if (_scannedStop != null) {
+                              setState(() {
+                                _scannedStop = null;
+                                _scannedBarcode = null;
+                                _verifyResult = _QrCheck.none;
+                              });
+                              return;
+                            }
+                            _autoRecenteringTimer?.cancel();
+                            _autoRecenteringTimer = null;
+                            _hudHideTimer?.cancel();
+                            VoiceGuidance.instance.stop();
+                            setState(() {
+                              _isNavigating = false;
+                              _autoRecenterArmed = false;
+                              _courseUp = false;
+                              _hudVisible = false;
+                              _cardDragDx = 0.0;
+                              _scannedStop = null;
+                              _scannedBarcode = null;
+                              _verifyResult = _QrCheck.none;
+                            });
+                            _animatedMapMove(_mapController.camera.center, _mapController.camera.zoom, destRotation: 0, durationMs: 400);
+                          },
+                        ),
                       ),
                     ),
                   ),
@@ -2451,6 +2702,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     required VoidCallback onTap,
     String? tooltip,
     bool isActive = false,
+    int badgeCount = 0,
   }) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final bg = isActive
@@ -2462,33 +2714,369 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     final iconColor = isActive
         ? Colors.white
         : (isDark ? AppColors.textWhite : AppColors.lightTextPrimary);
+    final button = Container(
+      width: 46,
+      height: 46,
+      decoration: BoxDecoration(
+        color: bg.withValues(alpha: 0.95),
+        shape: BoxShape.circle,
+        border: Border.all(color: border, width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: isActive
+                ? AppColors.circuitBlue.withValues(alpha: 0.5)
+                : Colors.black.withValues(alpha: isDark ? 0.5 : 0.18),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(23),
+          onTap: onTap,
+          child: Icon(icon, color: iconColor, size: 22),
+        ),
+      ),
+    );
     return Tooltip(
       message: tooltip ?? '',
-      child: Container(
-        width: 46,
-        height: 46,
-        decoration: BoxDecoration(
-          color: bg.withValues(alpha: 0.95),
-          shape: BoxShape.circle,
-          border: Border.all(color: border, width: 1.2),
-          boxShadow: [
-            BoxShadow(
-              color: isActive
-                  ? AppColors.circuitBlue.withValues(alpha: 0.5)
-                  : Colors.black.withValues(alpha: isDark ? 0.5 : 0.18),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
+      child: badgeCount <= 0
+          ? button
+          : Stack(
+              clipBehavior: Clip.none,
+              children: [
+                button,
+                // Bolhinha com a contagem de atualizações pendentes.
+                Positioned(
+                  top: -3,
+                  right: -3,
+                  child: Container(
+                    constraints: const BoxConstraints(minWidth: 18),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                    decoration: BoxDecoration(
+                      color: AppColors.statusDanger,
+                      borderRadius: BorderRadius.circular(9),
+                      border: Border.all(color: bg.withValues(alpha: 0.95), width: 1.5),
+                    ),
+                    child: Text(
+                      badgeCount > 9 ? '9+' : '$badgeCount',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        height: 1.3,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+    );
+  }
+
+  /// Botão do drawer que substituiu o "Sair da conta" (o logout segue em
+  /// Minha Conta & Configurações): mostra a versão publicada, e "Atualizar"
+  /// quando o servidor tem uma mais nova que a instalada.
+  Widget _buildUpdateButton(BuildContext context) {
+    return ValueListenableBuilder<AppRelease?>(
+      valueListenable: AppUpdateService.instance.availableUpdate,
+      builder: (context, release, _) {
+        final hasUpdate = release != null;
+        return SizedBox(
+          width: double.infinity,
+          height: 38,
+          child: OutlinedButton(
+            style: OutlinedButton.styleFrom(
+              backgroundColor: hasUpdate
+                  ? AppColors.circuitBlue
+                  : AppColors.circuitBlue.withValues(alpha: 0.08),
+              side: BorderSide(
+                color: AppColors.circuitBlue.withValues(alpha: hasUpdate ? 1 : 0.45),
+                width: 1.2,
+              ),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              elevation: 0,
+            ),
+            onPressed: () => _checkForUpdates(),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  hasUpdate ? Icons.system_update_alt : Icons.refresh,
+                  size: 17,
+                  color: hasUpdate ? Colors.white : AppColors.circuitBlue,
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    hasUpdate
+                        ? 'Atualizar para ${release.version}'
+                        : 'Verificar atualizações',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: hasUpdate ? Colors.white : AppColors.circuitBlue,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// Verificação disparada pelo botão: fala com o servidor (não usa só o
+  /// cache) para não dizer "está atualizado" com informação velha.
+  Future<void> _checkForUpdates() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final update = AppUpdateService.instance;
+    // O botão vive no drawer: fecha antes de abrir diálogo/snackbar.
+    _scaffoldKey.currentState?.closeDrawer();
+    final result = await update.checkNow();
+    if (!mounted) return;
+    final release = update.availableUpdate.value;
+    void inform(String message) {
+      messenger.showSnackBar(SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+      ));
+    }
+
+    switch (result) {
+      case UpdateCheck.available:
+        if (release != null) await _offerUpdate(release);
+      case UpdateCheck.upToDate:
+        inform(
+          'Você já está na versão publicada (${update.installedLabel.value}).',
+        );
+      case UpdateCheck.nothingPublished:
+        // Servidor respondeu, mas o `release_apk.sql` ainda não rodou:
+        // isso NÃO é falta de internet.
+        inform('Nenhuma versão publicada no servidor ainda.');
+      case UpdateCheck.offline:
+        inform('Sem conexão para verificar atualizações.');
+    }
+  }
+
+  /// Avisa o que vem na versão nova e só baixa se o usuário mandar.
+  Future<void> _offerUpdate(AppRelease release) async {
+    final start = await showDialog<bool>(
+      context: context,
+      builder: (dCtx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        title: const Text(
+          'Atualização disponível',
+          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Instalada: ${AppUpdateService.instance.installedLabel.value}',
+              style: const TextStyle(fontSize: 12.5, color: Color(0xFF64748B)),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              'Publicada: ${release.version} (${release.build})',
+              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+            ),
+            if (AppUpdateService.isOlder(
+              remoteVersion: release.version,
+              remoteBuild: release.build,
+              installedVersion: AppUpdateService.instance.installedVersion,
+              installedBuild: AppUpdateService.instance.installedBuild,
+            )) ...[
+              const SizedBox(height: 8),
+              const Text(
+                'Atenção: a publicada é mais antiga que a instalada — o Android '
+                'pode recusar a instalação.',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: AppColors.statusDanger,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+            if (release.notes.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Text(release.notes, style: const TextStyle(fontSize: 12.5)),
+            ],
+            const SizedBox(height: 10),
+            const Text(
+              'O download é feito pelo app e a instalação é confirmada pelo '
+              'Android.',
+              style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
             ),
           ],
         ),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(23),
-            onTap: onTap,
-            child: Icon(icon, color: iconColor, size: 22),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dCtx, false),
+            child: const Text('Depois'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dCtx, true),
+            child: const Text('Baixar e instalar'),
+          ),
+        ],
+      ),
+    );
+    if (start != true || !mounted) return;
+    await _runUpdate(release);
+  }
+
+  /// Baixa com barra de progresso e chama o instalador do Android.
+  Future<void> _runUpdate(AppRelease release) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final progress = ValueNotifier<double>(0);
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        content: ValueListenableBuilder<double>(
+          valueListenable: progress,
+          builder: (_, value, _) => Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Baixando ${release.version}…',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 14),
+              LinearProgressIndicator(value: value <= 0 ? null : value),
+              const SizedBox(height: 8),
+              Text(
+                '${(value * 100).clamp(0, 100).toStringAsFixed(0)}%',
+                style: const TextStyle(fontSize: 12),
+              ),
+            ],
           ),
         ),
+      ),
+    );
+    final outcome = await AppUpdateService.instance.downloadAndInstall(
+      onProgress: (p) => progress.value = p,
+    );
+    if (mounted) navigator.pop();
+    progress.dispose();
+    if (!mounted) return;
+
+    switch (outcome) {
+      case InstallOutcome.installerOpened:
+        messenger.showSnackBar(const SnackBar(
+          content: Text('Download concluído — confirme a instalação no Android.'),
+          behavior: SnackBarBehavior.floating,
+        ));
+      case InstallOutcome.needsPermission:
+        // O sistema já abriu a autorização de fontes desconhecidas.
+        messenger.showSnackBar(const SnackBar(
+          content: Text(
+            'Autorize "Instalar apps desconhecidos" para o Lifo e toque em '
+            'Atualizar de novo.',
+          ),            behavior: SnackBarBehavior.floating,
+            duration: Duration(seconds: 6),
+          ));
+        case InstallOutcome.failed:
+        messenger.showSnackBar(const SnackBar(
+          content: Text('Falha ao baixar a atualização. Tente novamente.'),
+          behavior: SnackBarBehavior.floating,
+        ));
+      case InstallOutcome.noUpdate:
+        break;
+    }
+  }
+
+  /// Janelinha de câmera sob demanda, ao lado dos controles do mapa.
+  /// Bipou → valida e fecha sozinha; o resultado fica no card.
+  Widget _buildQrPip(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final border = isDark ? AppColors.carbonBorder : AppColors.lightBorder;
+    final controller = _qrPipController;
+    return Container(
+      width: 148,
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: border, width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.45),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            height: 170,
+            child: controller == null
+                ? const Center(
+                    child: SizedBox(
+                      width: 22,
+                      height: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : MobileScanner(
+                    controller: controller,
+                    onDetect: _onQrPipDetect,
+                    errorBuilder: (context, error) {
+                      return const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(12),
+                          child: Text(
+                            'Sem câmera',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+          InkWell(
+            onTap: () => _toggleQrPip(open: false),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 7),
+              color: isDark
+                  ? AppColors.carbonSurfaceInput
+                  : AppColors.lightSurfaceElevated,
+              child: Text(
+                'Fechar',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: isDark
+                      ? AppColors.textWhite
+                      : AppColors.lightTextPrimary,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -3892,6 +4480,60 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     );
   }
 
+  /// Linha de status da validação QR + GPS. Sólida, curta, sem travar nada.
+  Widget _buildVerifyLine({required bool isDark, required String stopId}) {
+    if (_verifiedStopId != stopId || _verifyResult == _QrCheck.none) {
+      return const SizedBox.shrink();
+    }
+    final Color dot;
+    final String label;
+    switch (_verifyResult) {
+      case _QrCheck.ok:
+        dot = AppColors.statusSuccess;
+        label = 'Local confirmado';
+        break;
+      case _QrCheck.far:
+      case _QrCheck.other:
+        return const SizedBox.shrink();
+      case _QrCheck.unknown:
+        dot = AppColors.statusNeutral;
+        label = 'Código fora do manifesto';
+        break;
+      case _QrCheck.noGps:
+        dot = AppColors.statusNeutral;
+        label = 'Código certo — sem GPS';
+        break;
+      case _QrCheck.none:
+        return const SizedBox.shrink();
+    }
+    final textColor = isDark ? AppColors.textWhite : AppColors.lightTextPrimary;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: textColor,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildNavigationCardDetails({
     required bool isDark,
     required bool isSidePanel,
@@ -3900,14 +4542,25 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     required Color subColor,
     required Color cardBorder,
     required String? notes,
+    VoidCallback? onTapTracking,
   }) {
     final barcodes = stop.packages
         .map((p) => p.barcode.trim())
         .where((b) => b.isNotEmpty)
         .toList();
-    final trackingLabel = barcodes.isNotEmpty
-        ? barcodes.join(' • ')
-        : 'ID #${stop.sequenceIndex} (Sem código vinculado)';
+    
+    // Prioriza o código bipado no momento para exibição no card (mesmo que seja da parada atual)
+    String trackingLabel;
+    final isScannedCurrent = _scannedBarcode != null && _verifiedStopId == stop.id && (_verifyResult == _QrCheck.ok || _verifyResult == _QrCheck.far || _verifyResult == _QrCheck.noGps);
+    final isScannedOther = _scannedBarcode != null && _verifiedStopId == stop.id && _verifyResult == _QrCheck.other;
+
+    if (isScannedCurrent || isScannedOther) {
+      trackingLabel = _scannedBarcode!;
+    } else {
+      trackingLabel = barcodes.isNotEmpty
+          ? barcodes.join(' • ')
+          : 'ID #${stop.sequenceIndex} (Sem código vinculado)';
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -3931,7 +4584,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
             height: 1.35,
           ),
         ),
-        Container(
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTapTracking,
+          child: Container(
           width: double.infinity,
           margin: const EdgeInsets.only(top: 10),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -3960,17 +4616,21 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
               ),
               const SizedBox(width: 6),
               Expanded(
-                child: Text(
-                  trackingLabel,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w800,
-                    fontFamily: 'monospace',
-                    color: titleColor,
-                    letterSpacing: 0.5,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300),
+                  child: Text(
+                    trackingLabel,
+                    key: ValueKey(trackingLabel),
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      fontFamily: 'monospace',
+                      color: titleColor,
+                      letterSpacing: 0.5,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               if (stop.packages.length > 1)
@@ -3992,7 +4652,78 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                 ),
             ],
           ),
+          ),
         ),
+        _buildVerifyLine(isDark: isDark, stopId: stop.id),
+        
+        // Alerta de endereço divergente (bipagem fora de ordem ou longe)
+        if ((_verifyResult == _QrCheck.other || _verifyResult == _QrCheck.far) && _verifiedStopId == stop.id) ...[
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppColors.statusDanger.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.statusDanger.withValues(alpha: 0.3)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.warning_amber_rounded, color: AppColors.statusDanger, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _verifyResult == _QrCheck.other ? 'DIVERGÊNCIA DE LOCAL' : 'FORA DO PONTO',
+                        style: const TextStyle(
+                          color: AppColors.statusDanger,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      RichText(
+                        text: TextSpan(
+                          style: TextStyle(
+                            color: isDark ? AppColors.textWhite : AppColors.lightTextPrimary,
+                            fontSize: 12,
+                            height: 1.4,
+                          ),
+                          children: [
+                            const TextSpan(text: 'Você está em '),
+                            TextSpan(
+                              text: _currentStreetName() ?? 'local não identificado',
+                              style: const TextStyle(fontWeight: FontWeight.w900, color: AppColors.circuitBlueGlow),
+                            ),
+                            const TextSpan(text: ' a '),
+                            TextSpan(
+                              text: _verifyDistanceM >= 1000 
+                                  ? '${(_verifyDistanceM / 1000).toStringAsFixed(1)} km' 
+                                  : '${_verifyDistanceM.round()} m',
+                              style: const TextStyle(fontWeight: FontWeight.w900, color: AppColors.statusDanger),
+                            ),
+                            const TextSpan(text: ' do endereço correto.\n'),
+                            TextSpan(
+                              text: stop.address,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontStyle: FontStyle.italic,
+                                color: (isDark ? AppColors.textWhite : AppColors.lightTextPrimary).withValues(alpha: 0.7),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+
         _buildStopLocationChip(isDark: isDark, stop: stop),
         if (notes != null && notes.isNotEmpty) ...[
           const SizedBox(height: 8),
@@ -4032,15 +4763,13 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   }
 
   Widget _buildActiveNavigationCard({
+    Key? key,
     required bool isDark,
     bool isSidePanel = false,
     required DeliveryStop stop,
     required int currentIndex,
     required int totalStops,
     required String timeLabel,
-    required VoidCallback onNavigate,
-    required VoidCallback onNext,
-    VoidCallback? onPrevious,
     required VoidCallback onMarkFailed,
     required VoidCallback onMarkCompleted,
     required VoidCallback onUndo,
@@ -4055,8 +4784,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     final cardBorder = isDark ? AppColors.carbonBorder : AppColors.lightBorder;
     final notes = stop.notes?.trim();
     final isFinalized = stop.status == StopStatus.completed || stop.status == StopStatus.failed;
-
+  
     return Container(
+      key: key,
       width: isSidePanel ? double.infinity : null,
       height: isSidePanel ? double.infinity : null,
       padding: EdgeInsets.fromLTRB(
@@ -4203,6 +4933,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                 subColor: subColor,
                 cardBorder: cardBorder,
                 notes: notes,
+                onTapTracking: () => _toggleQrPip(open: true),
               ),
             ),
           )
@@ -4215,6 +4946,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
             subColor: subColor,
             cardBorder: cardBorder,
             notes: notes,
+            onTapTracking: () => _toggleQrPip(open: true),
           ),
 
           // As Ações do Card (Layout de 2 linhas limpo e sem truncamentos)
@@ -4246,37 +4978,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
             Row(
               children: [
                 Expanded(
-                  flex: 2,
-                  child: _buildStopActionButton(
-                    isDark: isDark,
-                    isPrimary: true,
-                    icon: const Icon(Icons.navigation_rounded, size: 18, color: Colors.white),
-                    label: 'Navegar',
-                    onTap: onNavigate,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _buildStopActionButton(
-                    isDark: isDark,
-                    icon: Icon(
-                      Icons.redo_rounded,
-                      size: 18,
-                      color: isDark ? Colors.white70 : AppColors.lightTextSecondary,
-                    ),
-                    label: 'Próxima',
-                    onTap: onNext,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                Expanded(
                   child: _buildStopActionButton(
                     isDark: isDark,
                     isSelected: stop.status == StopStatus.failed,
+                    disabled: false,
                     selectedColor: const Color(0xFFDC2626),
                     icon: _failedDeliveryIcon(isDark),
                     label: 'Não entregue',
@@ -4288,6 +4993,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                   child: _buildStopActionButton(
                     isDark: isDark,
                     isSelected: stop.status == StopStatus.completed,
+                    disabled: false,
                     selectedColor: const Color(0xFF16A34A),
                     icon: _deliveredIcon(isDark),
                     label: 'Entregue',
@@ -4422,34 +5128,43 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     required VoidCallback onTap,
     bool isPrimary = false,
     bool isSelected = false,
+    bool disabled = false,
     Color? selectedColor,
     Color? customBg,
     Color? customBorder,
     Color? customTextColor,
   }) {
     final bg = customBg ??
-        (isPrimary
-            ? const Color(0xFF2563EB)
-            : (isSelected
-                ? (selectedColor ?? const Color(0xFF2563EB))
-                : (isDark ? AppColors.carbonSurfaceInput : AppColors.lightSurfaceElevated)));
+        (disabled
+            ? (isDark ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.05))
+            : (isPrimary
+                ? const Color(0xFF2563EB)
+                : (isSelected
+                    ? (selectedColor ?? const Color(0xFF2563EB))
+                    : (isDark ? AppColors.carbonSurfaceInput : AppColors.lightSurfaceElevated))));
     final border = customBorder ??
-        (isPrimary
-            ? const Color(0xFF2563EB)
-            : (isSelected
-                ? (selectedColor ?? const Color(0xFF2563EB))
-                : (isDark ? AppColors.carbonBorder : AppColors.lightBorder)));
+        (disabled
+            ? (isDark ? Colors.white.withValues(alpha: 0.1) : Colors.black.withValues(alpha: 0.1))
+            : (isPrimary
+                ? const Color(0xFF2563EB)
+                : (isSelected
+                    ? (selectedColor ?? const Color(0xFF2563EB))
+                    : (isDark ? AppColors.carbonBorder : AppColors.lightBorder))));
     final textColor = customTextColor ??
-        (isPrimary || isSelected
-            ? Colors.white
-            : (isDark ? AppColors.textWhite : AppColors.lightTextPrimary));
+        (disabled
+            ? (isDark ? AppColors.textSlate.withValues(alpha: 0.5) : AppColors.lightTextSecondary.withValues(alpha: 0.5))
+            : (isPrimary || isSelected
+                ? Colors.white
+                : (isDark ? AppColors.textWhite : AppColors.lightTextPrimary)));
 
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: onTap,
+        onTap: disabled ? null : onTap,
         borderRadius: BorderRadius.circular(10),
-        child: Ink(
+        child: Opacity(
+          opacity: disabled ? 0.6 : 1.0,
+          child: Ink(
           height: 44,
           decoration: BoxDecoration(
             color: bg,
@@ -4476,6 +5191,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
             ],
           ),
         ),
+      ),
       ),
     );
   }
@@ -4516,6 +5232,13 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
           style: TextStyle(fontSize: 13, height: 1.4),
         ),
         actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dCtx);
+              LegalDocumentScreen.open(ctx);
+            },
+            child: const Text('Termos & Privacidade', style: TextStyle(color: Color(0xFF2563EB), fontWeight: FontWeight.w700)),
+          ),
           TextButton(
             onPressed: () async {
               Navigator.pop(dCtx); // fecha o diálogo
@@ -4962,43 +5685,11 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                         ),
                       ],
                     ),
-                  ] else ...[
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            icon: const Icon(Icons.logout, size: 16, color: AppColors.statusDanger),
-                            label: const Text(
-                              'Sair da conta',
-                              style: TextStyle(color: AppColors.statusDanger, fontSize: 13, fontWeight: FontWeight.w600),
-                            ),
-                            style: OutlinedButton.styleFrom(
-                              side: BorderSide(color: AppColors.statusDanger.withValues(alpha: 0.4)),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                              padding: const EdgeInsets.symmetric(vertical: 10),
-                            ),
-                            onPressed: () async {
-                              final drawerCtx = context;
-                              Navigator.of(drawerCtx).pop();
-                              await ref.read(authControllerProvider.notifier).logout();
-                              if (drawerCtx.mounted) {
-                                // Zera a pilha: nenhuma rota logada sobrevive.
-                                // A raiz (main) já trocou p/ Login pelo estado,
-                                // o pushAndRemoveUntil garante o descarte total.
-                                LoginScreen.open(drawerCtx);
-                                ScaffoldMessenger.of(drawerCtx).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Você saiu da sua conta.'),
-                                    behavior: SnackBarBehavior.floating,
-                                  ),
-                                );
-                              }
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
                   ],
+                  // O "Sair da conta" saiu daqui (o logout vive em Minha
+                  // Conta & Configurações); o lugar é do update do APK.
+                  const SizedBox(height: 4),
+                  _buildUpdateButton(context),
                 ],
               ),
             ),

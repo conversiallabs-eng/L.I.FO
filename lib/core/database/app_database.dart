@@ -31,7 +31,7 @@ class AppDatabase {
 
     return await openDatabase(
       path,
-      version: 5,
+      version: 7,
       onCreate: _onCreate,
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -58,6 +58,31 @@ class AppDatabase {
             await db.execute(
               'ALTER TABLE package_items ADD COLUMN slot_user_assigned INTEGER NOT NULL DEFAULT 0',
             );
+          } catch (_) {}
+        }
+        if (oldVersion < 6) {
+          // v6: regiões de mapa offline por cidade (F3/F4).
+          await _createOfflineRegionsTable(db);
+        }
+        if (oldVersion < 7) {
+          // v7: geometria viária persistida por versão de manifesto.
+          // Sem isso, reabrir o app offline redesenhava a rota em linha
+          // reta (haversine). Agora a última rota de rua é reutilizada.
+          try {
+            await db.execute(
+                'ALTER TABLE manifest_versions ADD COLUMN road_polyline TEXT');
+          } catch (_) {}
+          try {
+            await db.execute(
+                'ALTER TABLE manifest_versions ADD COLUMN road_distance_m REAL');
+          } catch (_) {}
+          try {
+            await db.execute(
+                'ALTER TABLE manifest_versions ADD COLUMN road_duration_s REAL');
+          } catch (_) {}
+          try {
+            await db.execute(
+                'ALTER TABLE manifest_versions ADD COLUMN road_computed_at TEXT');
           } catch (_) {}
         }
       },
@@ -131,6 +156,26 @@ class AppDatabase {
     ''');
 
     await _createUserProfilesTable(db);
+    await _createOfflineRegionsTable(db);
+  }
+
+  Future<void> _createOfflineRegionsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS offline_regions (
+        city_key TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        min_lat REAL NOT NULL,
+        max_lat REAL NOT NULL,
+        min_lng REAL NOT NULL,
+        max_lng REAL NOT NULL,
+        min_zoom INTEGER NOT NULL,
+        max_zoom INTEGER NOT NULL,
+        tiles_total INTEGER NOT NULL,
+        tiles_done INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'pending',
+        updated_at TEXT NOT NULL
+      )
+    ''');
   }
 
   Future<void> _createUserProfilesTable(Database db) async {
@@ -589,5 +634,136 @@ class AppDatabase {
   Future<void> markQueueItemSynced(String id) async {
     final db = await database;
     await db.update('sync_queue', {'synced': 1}, where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ─── OFFLINE REGIONS (mapa por cidade, F3/F4) ──────────────────────────
+
+  Future<void> upsertOfflineRegion(Map<String, Object?> values) async {
+    final db = await database;
+    await _createOfflineRegionsTable(db);
+    final row = Map<String, Object?>.from(values);
+    row['updated_at'] = DateTime.now().toIso8601String();
+    await db.insert(
+      'offline_regions',
+      row,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getOfflineRegions() async {
+    final db = await database;
+    await _createOfflineRegionsTable(db);
+    return db.query('offline_regions', orderBy: 'updated_at DESC');
+  }
+
+  Future<Map<String, dynamic>?> getOfflineRegion(String cityKey) async {
+    final db = await database;
+    await _createOfflineRegionsTable(db);
+    final rows = await db.query(
+      'offline_regions',
+      where: 'city_key = ?',
+      whereArgs: [cityKey],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  Future<void> updateOfflineRegionProgress(
+    String cityKey, {
+    required int tilesDone,
+    required String status,
+  }) async {
+    final db = await database;
+    await _createOfflineRegionsTable(db);
+    await db.update(
+      'offline_regions',
+      {
+        'tiles_done': tilesDone,
+        'status': status,
+        'updated_at': DateTime.now().toIso8601String(),
+      },
+      where: 'city_key = ?',
+      whereArgs: [cityKey],
+    );
+  }
+
+  Future<void> deleteOfflineRegion(String cityKey) async {
+    final db = await database;
+    await _createOfflineRegionsTable(db);
+    await db.delete(
+      'offline_regions',
+      where: 'city_key = ?',
+      whereArgs: [cityKey],
+    );
+  }
+
+  // ─── GEOMETRIA VIÁRIA PERSISTIDA (v7 — fim da reta offline) ──────────
+  // Guarda a última polyline de RUA por versão de manifesto para reabrir
+  // offline com o traçado real (como o Spoke faz), nunca em linha reta.
+
+  /// Codifica pontos como "lat,lng;lat,lng;…" com 5 casas (~1m de precisão).
+  static String encodePolyline(List<Map<String, double>> points) {
+    final sb = StringBuffer();
+    for (var i = 0; i < points.length; i++) {
+      if (i > 0) sb.write(';');
+      sb.write(points[i]['lat']!.toStringAsFixed(5));
+      sb.write(',');
+      sb.write(points[i]['lng']!.toStringAsFixed(5));
+    }
+    return sb.toString();
+  }
+
+  static List<Map<String, double>> decodePolyline(String? encoded) {
+    if (encoded == null || encoded.isEmpty) return const [];
+    final out = <Map<String, double>>[];
+    for (final pair in encoded.split(';')) {
+      final parts = pair.split(',');
+      if (parts.length != 2) continue;
+      final lat = double.tryParse(parts[0]);
+      final lng = double.tryParse(parts[1]);
+      if (lat == null || lng == null) continue;
+      out.add({'lat': lat, 'lng': lng});
+    }
+    return out;
+  }
+
+  Future<void> saveRouteGeometry({
+    required String versionId,
+    required String encodedPolyline,
+    required double distanceMeters,
+    required double durationSeconds,
+  }) async {
+    final db = await database;
+    await db.update(
+      'manifest_versions',
+      {
+        'road_polyline': encodedPolyline,
+        'road_distance_m': distanceMeters,
+        'road_duration_s': durationSeconds,
+        'road_computed_at': DateTime.now().toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [versionId],
+    );
+  }
+
+  Future<Map<String, dynamic>?> getRouteGeometry(String versionId) async {
+    final db = await database;
+    final rows = await db.query(
+      'manifest_versions',
+      columns: [
+        'road_polyline',
+        'road_distance_m',
+        'road_duration_s',
+        'road_computed_at'
+      ],
+      where: 'id = ?',
+      whereArgs: [versionId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    final r = rows.first;
+    if ((r['road_polyline'] as String?)?.isNotEmpty != true) return null;
+    return r;
   }
 }

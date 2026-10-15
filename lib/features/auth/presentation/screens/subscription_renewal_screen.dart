@@ -8,12 +8,25 @@ import 'my_account_screen.dart';
 import 'pix_payment_screen.dart';
 
 class SubscriptionRenewalScreen extends ConsumerStatefulWidget {
-  const SubscriptionRenewalScreen({super.key});
+  /// locked: sem voltar (expirado travado no PIX). O botão de confiança
+  /// aparece dentro só para quem pode tomar (servidor decide online).
+  final bool locked;
+
+  const SubscriptionRenewalScreen({super.key, this.locked = false});
 
   static Future<void> open(BuildContext context) {
     return Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => const SubscriptionRenewalScreen(),
+        fullscreenDialog: true,
+      ),
+    );
+  }
+
+  static Future<void> openLocked(BuildContext context) {
+    return Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const SubscriptionRenewalScreen(locked: true),
         fullscreenDialog: true,
       ),
     );
@@ -30,6 +43,80 @@ class _SubscriptionRenewalScreenState
   AsaasPixChargeResponse? _pixResponse;
   String _selectedPlanId = SubscriptionPlan.monthly.id;
   SubscriptionPlan _lastChargedPlan = SubscriptionPlan.monthly;
+  bool? _canGrace;
+  bool _gracePending = false;
+  bool _grantingGrace = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadGraceInfo();
+  }
+
+  Future<void> _loadGraceInfo() async {
+    try {
+      final ctrl = ref.read(authControllerProvider.notifier);
+      final can = await ctrl.canTakeGrace();
+      final pending = await ctrl.isGracePending();
+      if (!mounted) return;
+      setState(() {
+        _canGrace = can;
+        _gracePending = pending;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _canGrace = false);
+    }
+  }
+
+  Future<void> _takeGrace() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Liberar na confiança?'),
+        content: const Text(
+          'O LIFO libera seu app por mais 5 dias na confiança. '
+          'Quando você pagar, a renovação libera 25 dias '
+          '(5 já usados na confiança).',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('Agora não'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('Liberar 5 dias'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    setState(() => _grantingGrace = true);
+    HapticFeedback.mediumImpact();
+    final ok =
+        await ref.read(authControllerProvider.notifier).grantTrustGrace();
+    if (!mounted) return;
+    setState(() => _grantingGrace = false);
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Liberado por 5 dias na confiança! Bom trabalho.'),
+          backgroundColor: Color(0xFF059669),
+        ),
+      );
+      Navigator.of(context).pop();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível liberar agora. Tente o PIX.'),
+          backgroundColor: Color(0xFFDC2626),
+        ),
+      );
+      await _loadGraceInfo();
+    }
+  }
 
   SubscriptionPlan get _selectedPlan => SubscriptionPlan.byId(_selectedPlanId);
 
@@ -134,15 +221,19 @@ class _SubscriptionRenewalScreenState
     final daysLeft = _daysRemaining(user.expiresAt);
     final isExpired = user.expiresAt.isBefore(DateTime.now());
 
-    return Scaffold(
+    return PopScope(
+      canPop: !widget.locked,
+      child: Scaffold(
       backgroundColor: bg,
       appBar: AppBar(
         backgroundColor: bg,
         elevation: 0,
-        leading: IconButton(
-          icon: Icon(Icons.close, color: titleColor, size: 24),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
+        leading: widget.locked
+            ? Icon(Icons.lock_outline, color: subColor, size: 22)
+            : IconButton(
+                icon: Icon(Icons.close, color: titleColor, size: 24),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
         title: Text(
           'Renovar Assinatura',
           style: TextStyle(
@@ -263,6 +354,52 @@ class _SubscriptionRenewalScreenState
               ),
             ),
             const SizedBox(height: 20),
+
+            // ── CONFIANÇA ("LIBERE E PAGUE") ──────────────────────────────────
+            // Expirado que já pagou 1x: +5 dias na confiança. Sem adiantamento
+            // aberto e ainda não pagou: aviso (a renovação libera 25 dias).
+            if (_canGrace == true) ...[
+              _trustCard(
+                isDark: isDark,
+                cardBg: cardBg,
+                titleColor: titleColor,
+                subColor: subColor,
+              ),
+              const SizedBox(height: 20),
+            ] else if (_canGrace == false && _gracePending && isExpired) ...[
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? const Color(0xFF1E293B)
+                      : const Color(0xFFFFFBEB),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: const Color(0xFFD97706).withValues(alpha: 0.4),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.handshake_outlined,
+                        size: 22, color: Color(0xFFD97706)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Você usou os 5 dias de confiança. Pague para continuar — '
+                        'sua renovação libera 25 dias (5 já usados na confiança).',
+                        style: TextStyle(
+                          color: titleColor,
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w600,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
 
             // ── PLANOS (toque para selecionar) ───────────────────────────────
             Text(
@@ -555,6 +692,99 @@ class _SubscriptionRenewalScreenState
             const SizedBox(height: 24),
           ],
         ),
+      ),
+      ),
+    );
+  }
+
+  Widget _trustCard({
+    required bool isDark,
+    required Color cardBg,
+    required Color titleColor,
+    required Color subColor,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: isDark
+              ? [const Color(0xFF065F46), const Color(0xFF064E3B)]
+              : [const Color(0xFFECFDF5), const Color(0xFFD1FAE5)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: const Color(0xFF059669).withValues(alpha: 0.5),
+          width: 1.2,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.handshake_outlined,
+                  size: 22, color: Color(0xFF059669)),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Libere e pague (confiança)',
+                  style: TextStyle(
+                    color: Color(0xFF059669),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Libere seu app por mais 5 dias, o LIFO confia em você. '
+            'Quando você pagar, a renovação libera 25 dias '
+            '(5 já usados na confiança).',
+            style: TextStyle(
+              color: titleColor,
+              fontSize: 12.5,
+              height: 1.45,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 46,
+            child: ElevatedButton.icon(
+              icon: _grantingGrace
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        color: Colors.white,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : const Icon(Icons.volunteer_activism,
+                      color: Colors.white, size: 20),
+              label: Text(
+                _grantingGrace ? 'Liberando...' : 'Liberar 5 dias na confiança',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF059669),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                elevation: 0,
+              ),
+              onPressed: _grantingGrace ? null : _takeGrace,
+            ),
+          ),
+        ],
       ),
     );
   }

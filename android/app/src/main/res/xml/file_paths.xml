@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Pastas que o FileProvider expõe como content:// para o instalador do
+  Android receber o APK baixado (fluxo "Verificar atualizações").
+
+  São só diretórios privados do app: nada é legível sem um grant explícito
+  de URI no intent. O AppUpdateService baixa em <raiz>/updates, sendo a raiz
+  getExternalFilesDir() (Android/data/<pkg>/files) e, na reserva,
+  getFilesDir() (<data>/files).
+-->
+<paths>
+    <external-files-path name="ext_updates" path="updates/" />
+    <files-path name="int_updates" path="updates/" />
+</paths>

@@ -112,67 +112,36 @@ serve(async (req) => {
     }
     if (!authUid) throw new Error("Usuário não identificado no pagamento.");
 
-    // ── Estende a assinatura (base = maior entre hoje e o vencimento atual) ──
-    const { data: current } = await admin
-      .from("subscriptions")
-      .select("id, expires_at")
-      .eq("user_id", authUid)
-      .order("expires_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    // Dias pelo valor pago: R$ 200+ = anual (365d), senão mensal (30d).
+    // ── Escritor único: fn_apply_payment (idempotente, desconta confiança) ──
+    // Acaba o duplo-crédito (app somava +30 local e o webhook somava +30).
     const paidValue = Number(payment?.value ?? 0);
-    const days = paidValue >= 199 ? 365 : 30;
-
-    const base = current?.expires_at
-      ? Math.max(new Date(current.expires_at as string).getTime(), Date.now())
-      : Date.now();
-    const newExpiry = new Date(base + days * 24 * 60 * 60 * 1000).toISOString();
-
     const priceCents = Math.round(paidValue * 100);
-    const planLabel = days >= 365 ? "Standard Anual (Ativo)" : "Standard (Ativo)";
 
-    // Update-or-insert (sem depender de UNIQUE em user_id).
-    if (current?.id) {
-      const { error } = await admin
-        .from("subscriptions")
-        .update({
-          plan_type: "pix_manual",
-          status: "active",
-          price_cents: priceCents,
-          starts_at: new Date().toISOString(),
-          expires_at: newExpiry,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", current.id as string);
-      if (error) throw new Error(`Falha ao ativar assinatura: ${error.message}`);
-    } else {
-      const { error } = await admin.from("subscriptions").insert({
+    const { data: applied, error: rpcError } = await admin.rpc(
+      "fn_apply_payment",
+      {
+        p_asaas_payment_id: paymentId,
+        p_user_id: authUid,
+        p_value_cents: priceCents,
+        p_source: "webhook",
+        p_provisional_granted_at: null,
+      },
+    );
+    if (rpcError) throw new Error(`Falha ao ativar assinatura: ${rpcError.message}`);
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
         user_id: authUid,
-        plan_type: "pix_manual",
-        status: "active",
-        price_cents: priceCents,
-        starts_at: new Date().toISOString(),
-        expires_at: newExpiry,
-        updated_at: new Date().toISOString(),
-      });
-      if (error) throw new Error(`Falha ao criar assinatura: ${error.message}`);
-    }
-
-    await admin
-      .from("user_profiles")
-      .update({
-        plan: planLabel,
-        expires_at: newExpiry,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("auth_uid", authUid);
-
-    return new Response(JSON.stringify({ ok: true, user_id: authUid, expires_at: newExpiry }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 200,
-    });
+        applied: (applied as any)?.applied ?? false,
+        expires_at: (applied as any)?.expires_at ?? null,
+        deducted_days: (applied as any)?.deducted_days ?? 0,
+      }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 200,
+      },
+    );
   } catch (e: any) {
     // 200 mesmo em erro interno? Não — 500 faz o Asaas retentar (bom).
     return new Response(JSON.stringify({ error: e?.message ?? "webhook error" }), {

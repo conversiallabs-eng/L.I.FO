@@ -6,6 +6,7 @@ import '../../../../core/services/cep_service.dart';
 import '../controllers/auth_controller.dart';
 import 'login_screen.dart';
 import 'subscription_renewal_screen.dart';
+import 'legal_document_screen.dart';
 
 class MyAccountScreen extends ConsumerStatefulWidget {
   const MyAccountScreen({super.key});
@@ -543,6 +544,92 @@ class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
                     value: _formatDate(user.expiresAt),
                     titleColor: titleColor,
                     subColor: subColor,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+
+            // ── INFORMAÇÕES LEGAIS & TERMOS ──
+            Text(
+              'Informações Legais & Termos',
+              style: TextStyle(color: titleColor, fontSize: 14, fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 10),
+
+            Container(
+              decoration: BoxDecoration(
+                color: cardBg,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: borderColor),
+              ),
+              child: Column(
+                children: [
+                  InkWell(
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+                    onTap: () => LegalDocumentScreen.openTerms(context),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.description_outlined, size: 20, color: Color(0xFF2563EB)),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Text(
+                              'Termos de Uso do Serviço',
+                              style: TextStyle(fontSize: 13, color: titleColor, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                          Icon(Icons.chevron_right, size: 20, color: subColor),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Divider(color: borderColor, height: 1),
+                  InkWell(
+                    onTap: () => LegalDocumentScreen.openPrivacy(context),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.privacy_tip_outlined, size: 20, color: Color(0xFF2563EB)),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Text(
+                              'Política de Privacidade (LGPD)',
+                              style: TextStyle(fontSize: 13, color: titleColor, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                          Icon(Icons.chevron_right, size: 20, color: subColor),
+                        ],
+                      ),
+                    ),
+                  ),
+                  Divider(color: borderColor, height: 1),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.info_outline, size: 20, color: Color(0xFF2563EB)),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Versão do Aplicativo',
+                                style: TextStyle(fontSize: 11, color: subColor, fontWeight: FontWeight.w500),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'L.I.F.O. v1.0.0 (Build 1)',
+                                style: TextStyle(fontSize: 13, color: titleColor, fontWeight: FontWeight.w600),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),

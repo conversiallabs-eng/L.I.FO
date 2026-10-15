@@ -93,7 +93,8 @@ class HybridRoutingService {
       }
     }
 
-    // 1. Tenta otimização viária real (OSRM Trip API - respeita a SC-401, mãos de direção e proximidade real por asfalto)
+    // 1. Otimização viária real (OSRM Trip API - respeita mãos de direção
+    // e proximidade real por asfalto, nunca linha reta).
     if (startLat != null && startLng != null && rawStops.length <= 98) {
       final tripResult = await _optimizeWithOsrmTrip(
         rawStops: rawStops,
@@ -105,14 +106,10 @@ class HybridRoutingService {
       }
     }
 
-    // 2. Fallback por Nearest Neighbor (se offline)
-    final orderedStops = LifoCalculator.optimizeRouteStops(
-      rawStops,
-      startLat: startLat,
-      startLng: startLng,
-    );
-
-    // 2. Traça a rota viária pelas ruas (OSRM), começando na posição do usuário
+    // 2. Sem Trip: traça a rota viária na ordem recebida (OSRM Route).
+    // A ordem é preservada — NUNCA reordenada por linha reta.
+    // Só os slots LIFO são atribuídos (mapeamento, sem cálculo de distância).
+    final orderedStops = LifoCalculator.assignSlots(rawStops);
     try {
       final geom = await _fetchRouteGeometry(
         stops: orderedStops,
@@ -133,18 +130,13 @@ class HybridRoutingService {
       debugPrint('Erro ao buscar geometria OSRM: $e');
     }
 
-    // 3. Fallback offline: polilinha conectando o ponto de partida à Parada 1 e seguintes
-    final List<LatLng> fallbackPolyline = [];
-    if (startLat != null && startLng != null) {
-      fallbackPolyline.add(LatLng(startLat, startLng));
-    }
-    for (final stop in orderedStops) {
-      fallbackPolyline.add(LatLng(stop.latitude, stop.longitude));
-    }
-
+    // 3. Offline/sem rota: ordem preservada, SEM polyline.
+    // Desenhar reta aqui era o "haversine" visível — o mapa mostra só
+    // marcadores + tiles offline até a geometria de rua ser restaurada
+    // do banco local (v7) ou a rede voltar.
     return RoutingResult(
       stops: orderedStops,
-      polylinePoints: fallbackPolyline,
+      polylinePoints: const [],
       isOnline: false,
       totalDistanceMeters: 0,
       totalDurationSeconds: 0,
@@ -188,17 +180,11 @@ class HybridRoutingService {
       }
     } catch (_) {}
 
-    final List<LatLng> fallback = [];
-    if (startLat != null && startLng != null) {
-      fallback.add(LatLng(startLat, startLng));
-    }
-    for (final s in stops) {
-      fallback.add(LatLng(s.latitude, s.longitude));
-    }
-
+    // Sem geometria de rua: retorna vazio — nunca reta.
+    // Quem chama restaura a última polyline salva no banco (v7).
     return RoutingResult(
       stops: stops,
-      polylinePoints: fallback,
+      polylinePoints: const [],
       isOnline: false,
       totalDistanceMeters: 0,
       totalDurationSeconds: 0,
@@ -208,6 +194,8 @@ class HybridRoutingService {
 
   /// Trajeto de um ponto a outro (ex: GPS até próxima parada).
   /// Retorna também os steps de manobra do OSRM (gratuito).
+  /// O parse (JSON + pontos + steps) roda em isolate (Fase 2b perf) para
+  /// não travar frames durante a navegação.
   Future<({List<LatLng> points, double distance, double duration, List<RouteStep> steps})?> fetchLegRoute({
     required LatLng from,
     required LatLng to,
@@ -223,87 +211,114 @@ class HybridRoutingService {
         ).timeout(const Duration(seconds: 10));
 
         if (response.statusCode != 200) continue;
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final routes = data['routes'] as List<dynamic>?;
-        if (routes == null || routes.isEmpty) continue;
-        final first = routes.first as Map<String, dynamic>;
-        final rawPoints =
-            (first['geometry'] as Map<String, dynamic>?)?['coordinates'] as List<dynamic>?;
-        if (rawPoints == null || rawPoints.isEmpty) continue;
-
-        // Parseia steps do primeiro leg
-        final steps = _parseOsrmSteps(first);
-
+        // Parse pesado (GeoJSON cheio) em isolate; reconstrói objetos baratos aqui.
+        final parsed =
+            await compute(_parseLegJson, response.body);
+        if (parsed == null) continue;
+        final rawPts = parsed['points'] as List<dynamic>;
+        final rawSteps = parsed['steps'] as List<dynamic>;
         return (
           points: [
-            for (final p in rawPoints)
-              LatLng((p[1] as num).toDouble(), (p[0] as num).toDouble()),
+            for (final p in rawPts)
+              LatLng((p[0] as num).toDouble(), (p[1] as num).toDouble()),
           ],
-          distance: (first['distance'] as num?)?.toDouble() ?? 0.0,
-          duration: (first['duration'] as num?)?.toDouble() ?? 0.0,
-          steps: steps,
+          distance: (parsed['distance'] as num?)?.toDouble() ?? 0.0,
+          duration: (parsed['duration'] as num?)?.toDouble() ?? 0.0,
+          steps: [
+            for (final s in rawSteps)
+              RouteStep(
+                maneuver: RouteStep.fromOsrm(
+                  s['t'] as String? ?? '',
+                  s['m'] as String? ?? '',
+                ),
+                distanceMeters: (s['d'] as num?)?.toDouble() ?? 0.0,
+                streetName: s['s'] as String? ?? '',
+                roundaboutExit: (s['e'] as num?)?.toInt() ?? 0,
+                location: s['lat'] == null
+                    ? null
+                    : LatLng(
+                        (s['lat'] as num).toDouble(),
+                        (s['lng'] as num).toDouble(),
+                      ),
+              ),
+          ],
         );
       } catch (_) {}
     }
     return null;
   }
 
-  /// Converte os steps OSRM em lista de RouteStep
-  List<RouteStep> _parseOsrmSteps(Map<String, dynamic> route) {
-    final legs = route['legs'] as List<dynamic>?;
-    if (legs == null || legs.isEmpty) return [];
-    final rawSteps = (legs.first as Map<String, dynamic>)['steps'] as List<dynamic>?;
-    if (rawSteps == null) return [];
+  /// Parse pesado do GeoJSON da perna em isolate (Fase 2b perf).
+  /// Top-level + SÓ tipos enviáveis (Map/List/num/String): objetos
+  /// LatLng/RouteStep são reconstruídos na thread UI (barato).
+  /// Retorna null se a resposta não tem rota utilizável.
+  static Map<String, dynamic>? _parseLegJson(String body) {
+    try {
+      final data = jsonDecode(body) as Map<String, dynamic>;
+      final routes = data['routes'] as List<dynamic>?;
+      if (routes == null || routes.isEmpty) return null;
+      final first = routes.first as Map<String, dynamic>;
+      final rawPoints =
+          (first['geometry'] as Map<String, dynamic>?)?['coordinates']
+              as List<dynamic>?;
+      if (rawPoints == null || rawPoints.isEmpty) return null;
 
-    final result = <RouteStep>[];
-    for (final raw in rawSteps) {
-      final step = raw as Map<String, dynamic>;
-      final maneuverMap = step['maneuver'] as Map<String, dynamic>?;
-      if (maneuverMap == null) continue;
+      // Achata para pares [lat, lng] (números puros atravessam o isolate).
+      final points = <List<double>>[];
+      for (final p in rawPoints) {
+        final lat = (p[1] as num?)?.toDouble();
+        final lng = (p[0] as num?)?.toDouble();
+        if (lat == null || lng == null) continue;
+        points.add([lat, lng]);
+      }
+      if (points.isEmpty) return null;
 
-      final type = maneuverMap['type'] as String? ?? '';
-      final modifier = maneuverMap['modifier'] as String? ?? '';
-      final exit = maneuverMap['exit'] as int? ?? 0;
-      final distance = (step['distance'] as num?)?.toDouble() ?? 0.0;
-      // Nome da rua: OSRM devolve em "name" ou "ref"
-      final name = (step['name'] as String?) ?? '';
-      final ref = (step['ref'] as String?) ?? '';
-      final streetName = name.isNotEmpty ? name : (ref.isNotEmpty ? ref : '');
-
-      final maneuver = RouteStep.fromOsrm(type, modifier);
-
-      // Coordenada da manobra (p/ o HUD saber ONDE é a curva/rotatória).
-      LatLng? location;
-      final loc = maneuverMap['location'] as List<dynamic>?;
-      if (loc != null && loc.length >= 2) {
-        final lng = (loc[0] as num?)?.toDouble();
-        final lat = (loc[1] as num?)?.toDouble();
-        if (lng != null && lat != null) {
-          location = LatLng(lat, lng);
+      // Steps crus do primeiro leg (tipo/modifier como string; o fromOsrm
+      // roda na UI, barato — são dezenas de steps).
+      final steps = <Map<String, dynamic>>[];
+      final legs = first['legs'] as List<dynamic>?;
+      final rawSteps = (legs != null && legs.isNotEmpty)
+          ? ((legs.first as Map<String, dynamic>)['steps'] as List<dynamic>?)
+          : null;
+      if (rawSteps != null) {
+        for (final raw in rawSteps) {
+          final step = raw as Map<String, dynamic>;
+          final maneuverMap = step['maneuver'] as Map<String, dynamic>?;
+          if (maneuverMap == null) continue;
+          final type = maneuverMap['type'] as String? ?? '';
+          final distance = (step['distance'] as num?)?.toDouble() ?? 0.0;
+          // Último step vazio de chegada: mantém e para (igual ao original).
+          final name = (step['name'] as String?) ?? '';
+          final ref = (step['ref'] as String?) ?? '';
+          double? lat;
+          double? lng;
+          final loc = maneuverMap['location'] as List<dynamic>?;
+          if (loc != null && loc.length >= 2) {
+            lng = (loc[0] as num?)?.toDouble();
+            lat = (loc[1] as num?)?.toDouble();
+          }
+          steps.add({
+            't': type,
+            'm': maneuverMap['modifier'] as String? ?? '',
+            'd': distance,
+            's': name.isNotEmpty ? name : ref,
+            'e': maneuverMap['exit'] as int? ?? 0,
+            'lat': lat,
+            'lng': lng,
+          });
+          if (type == 'arrive' && distance < 1) break;
         }
       }
 
-      // Ignora passos de chegada com distância 0 (último step vazio do OSRM)
-      if (maneuver == ManeuverType.arrive && distance < 1) {
-        result.add(RouteStep(
-          maneuver: maneuver,
-          distanceMeters: distance,
-          streetName: streetName,
-          roundaboutExit: exit,
-          location: location,
-        ));
-        break;
-      }
-
-      result.add(RouteStep(
-        maneuver: maneuver,
-        distanceMeters: distance,
-        streetName: streetName,
-        roundaboutExit: exit,
-        location: location,
-      ));
+      return {
+        'points': points,
+        'distance': (first['distance'] as num?)?.toDouble() ?? 0.0,
+        'duration': (first['duration'] as num?)?.toDouble() ?? 0.0,
+        'steps': steps,
+      };
+    } catch (_) {
+      return null;
     }
-    return result;
   }
 
   // ---------------------------------------------------------------------------

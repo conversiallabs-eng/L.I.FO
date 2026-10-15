@@ -57,6 +57,9 @@ dependencies:
   flutter_map_cache: ^2.1.0
   http_cache_hive_store: ^5.1.1
   flutter_tts: ^4.2.5
+  connectivity_plus: ^6.1.4
+  dio: ^5.9.0
+  package_info_plus: ^10.2.2
 
 dev_dependencies:
   flutter_test:

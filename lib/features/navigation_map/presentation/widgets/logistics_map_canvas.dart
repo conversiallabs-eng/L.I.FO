@@ -1,9 +1,13 @@
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import '../../../../core/map/map_tiles.dart';
 import '../../../../core/map/tile_cache.dart';
+import '../../../../core/network/connectivity_service.dart';
 import '../../../../core/theme/app_colors.dart';
+import '../../../../core/utils/route_simplify.dart';
 
 class MapCanvasMarker {
   final int sequenceIndex;
@@ -23,7 +27,7 @@ class MapCanvasMarker {
   });
 }
 
-class LogisticsMapCanvas extends StatelessWidget {
+class LogisticsMapCanvas extends StatefulWidget {
   final MapController? mapController;
   final LatLng initialCenter;
   final double initialZoom;
@@ -38,6 +42,11 @@ class LogisticsMapCanvas extends StatelessWidget {
   final void Function(int sequenceIndex)? onMarkerTap;
   final VoidCallback? onMapReady;
   final VoidCallback? onUserInteraction;
+  // ── GPS granular (Fase 1a perf): quando fornecidos, o pin/halo ouvem
+  // estes listenables e repintam SOZINHOS, sem rebuild do pai. Nulos =
+  // comportamento antigo (snapshot via currentLocationPin/headingDegrees).
+  final ValueListenable<LatLng?>? livePin;
+  final ValueListenable<double?>? liveHeading;
 
   const LogisticsMapCanvas({
     super.key,
@@ -55,22 +64,14 @@ class LogisticsMapCanvas extends StatelessWidget {
     this.onMarkerTap,
     this.onMapReady,
     this.onUserInteraction,
+    this.livePin,
+    this.liveHeading,
   });
 
-  // Tiles sem API key.
-  // - Light: rua do Google (visual idêntico ao app do Google Maps/iFood).
-  //   Endpoint não-oficial: se o Google recusar, o fallback OSM entra
-  //   sozinho (fundo claro, água azul, vias amarelas).
-  // - Dark: MESMO tile do Google com filtro noturno por tile (nítido até o
-  //   zoom 20 — o ESRI cinza parava no 16 e borrava na navegação).
-  // - Satellite: ESRI World Imagery.
-  static const String _googleRoads =
-      'https://mt{s}.google.com/vt/lyrs=m&hl=pt-BR&x={x}&y={y}&z={z}';
-  static const List<String> _googleSubdomains = ['0', '1', '2', '3'];
-  static const String _osmFallback =
-      'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
-  static const String _satelliteTile =
-      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+  // Tiles vêm da Mapbox (ver [MapTiles]): um provedor só para as três
+  // camadas, com token de app. Antes daqui o fundo do mapa era o endpoint
+  // não-oficial do Google com fallback no tile público do OSM — os dois com
+  // risco de bloqueio silencioso e sem atribuição correta.
 
   /// Calcula bounds que englobam rota + GPS para `fitCamera`.
   static LatLngBounds? boundsForPoints(List<LatLng> points) {
@@ -176,12 +177,74 @@ class LogisticsMapCanvas extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final canvasBg = isDark ? AppColors.carbonBackground : AppColors.lightBackground;
+  State<LogisticsMapCanvas> createState() => _LogisticsMapCanvasState();
+}
 
+/// Estado com CACHE de camadas caras (Fase 1b+1c perf):
+/// marcadores (83 pílulas com sombra) + split O(paradas×pontos) + strokes
+/// só são reconstruídos quando os DADOS mudam (rota, seleção, status,
+/// tema). Rebuild do pai por outros motivos (HUD, pin GPS via listenable)
+/// reutiliza os mesmos widgets → sem trabalho repetido.
+/// Levanta os pretos do tile noturno (+20 R/G, +32 B): mar e terra deixam
+/// de ser breu e os rótulos ganham contraste, sem trocar de provedor.
+const ColorFilter _darkLiftFilter = ColorFilter.matrix([
+  1, 0, 0, 0, 20,
+  0, 1, 0, 0, 20,
+  0, 0, 1, 0, 32,
+  0, 0, 0, 1, 0,
+]);
+
+class _LogisticsMapCanvasState extends State<LogisticsMapCanvas> {
+  List<MapCanvasMarker>? _snapMarkers;
+  List<LatLng>? _snapPolyline;
+  bool? _snapDark;
+  bool? _snapNavigating;
+  Widget? _cachedMarkerLayer;
+  List<Widget> _cachedLegLayers = const [];
+
+  static bool _markersEqual(
+      List<MapCanvasMarker>? a, List<MapCanvasMarker> b) {
+    if (a == null) return false;
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      final x = a[i];
+      final y = b[i];
+      if (x.sequenceIndex != y.sequenceIndex ||
+          x.position.latitude != y.position.latitude ||
+          x.position.longitude != y.position.longitude ||
+          x.isSelected != y.isSelected ||
+          x.isCompleted != y.isCompleted ||
+          x.isFailed != y.isFailed ||
+          x.slotColor != y.slotColor) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static bool _polylineEqual(List<LatLng>? a, List<LatLng> b) {
+    if (a == null) return false;
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  /// Reconstrói marcador + strokes (caro: 83 pills com sombra, split
+  /// O(paradas×pontos), 5 passadas). Chamado SÓ quando os dados mudam.
+  void _rebuildCachedLayers({
+    required List<MapCanvasMarker> markers,
+    required List<LatLng> routePolyline,
+    required bool isDark,
+    required bool isNavigating,
+    required void Function(int sequenceIndex)? onMarkerTap,
+  }) {
     // Segmentação da rota estilo Circuit:
-    // 1. nextLeg: do ponto de partida até a próxima parada -> pintada viva, casing e glow
-    // 2. remainingLeg: da próxima parada até as subsequentes -> rota mais fraquinha
+    // 1. nextLeg: até a próxima parada -> viva, casing e glow
+    // 2. remainingLeg: restante -> mais fraquinha
     List<LatLng> nextLeg = const [];
     List<LatLng> remainingLeg = const [];
 
@@ -191,7 +254,8 @@ class LogisticsMapCanvas extends StatelessWidget {
       if (selectedIdx != -1) {
         activeMarker = markers[selectedIdx];
       } else {
-        final pendingIdx = markers.indexWhere((m) => !m.isCompleted && !m.isFailed);
+        final pendingIdx =
+            markers.indexWhere((m) => !m.isCompleted && !m.isFailed);
         if (pendingIdx != -1) {
           activeMarker = markers[pendingIdx];
         } else if (markers.isNotEmpty) {
@@ -200,7 +264,8 @@ class LogisticsMapCanvas extends StatelessWidget {
       }
 
       if (activeMarker != null) {
-        final splitIdx = _findSplitIndex(routePolyline, markers, activeMarker);
+        final splitIdx = LogisticsMapCanvas._findSplitIndex(
+            routePolyline, markers, activeMarker);
         if (splitIdx > 0 && splitIdx < routePolyline.length - 1) {
           nextLeg = routePolyline.sublist(0, splitIdx + 1);
           remainingLeg = routePolyline.sublist(splitIdx);
@@ -214,6 +279,128 @@ class LogisticsMapCanvas extends StatelessWidget {
       }
     }
 
+    // Fase 3b: pinta a versão SIMPLIFICADA (display-only). O split acima
+    // usou precisão cheia; a geometria cheia segue no estado/banco/HUD.
+    final paintNext = RouteSimplify.douglasPeucker(nextLeg);
+    final paintRemaining = RouteSimplify.douglasPeucker(remainingLeg);
+
+    final legs = <Widget>[];
+    if (paintRemaining.length > 1) {
+      legs.add(
+        PolylineLayer(
+          polylines: [
+            Polyline(
+              points: paintRemaining,
+              strokeWidth: 4.5,
+              color: isDark
+                  ? Colors.black.withValues(alpha: 0.20)
+                  : Colors.white.withValues(alpha: 0.50),
+            ),
+            Polyline(
+              points: paintRemaining,
+              strokeWidth: 3.0,
+              color: isDark
+                  ? const Color(0xFF60A5FA).withValues(alpha: 0.38)
+                  : const Color(0xFF2563EB).withValues(alpha: 0.28),
+            ),
+          ],
+        ),
+      );
+    }
+    if (paintNext.length > 1) {
+      legs.add(
+        PolylineLayer(
+          polylines: [
+            // Fase 3a perf: glow 12px SÓ navegando (é a passada mais cara —
+            // overdraw em tela cheia). No overview, casing + núcleo bastam.
+            if (isNavigating)
+              Polyline(
+                points: paintNext,
+                strokeWidth: 12.0,
+                color: AppColors.routePolylineGlow.withValues(alpha: 0.32),
+              ),
+            Polyline(
+              points: paintNext,
+              strokeWidth: 7.0,
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.95)
+                  : Colors.white,
+            ),
+            Polyline(
+              points: paintNext,
+              strokeWidth: 4.5,
+              color: AppColors.routePolyline,
+            ),
+          ],
+        ),
+      );
+    }
+    _cachedLegLayers = legs;
+
+    _cachedMarkerLayer = MarkerLayer(
+      rotate: true,
+      markers: markers.map((item) {
+        final isTriple = item.sequenceIndex >= 100;
+        final double tapWidth = item.isSelected
+            ? (isTriple ? 48.0 : 42.0)
+            : (isTriple ? 40.0 : 34.0);
+        final double tapHeight = item.isSelected ? 32.0 : 28.0;
+
+        return Marker(
+          point: item.position,
+          width: tapWidth,
+          height: tapHeight,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => onMarkerTap?.call(item.sequenceIndex),
+            child: Center(
+              child: _buildStopMarker(item),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Aliases locais: o corpo do build segue idêntico ao Stateless original.
+    final mapController = widget.mapController;
+    final initialCenter = widget.initialCenter;
+    final initialZoom = widget.initialZoom;
+    final markers = widget.markers;
+    final routePolyline = widget.routePolyline;
+    final isSatellite = widget.isSatellite;
+    final isDark = widget.isDark;
+    final currentLocationPin = widget.currentLocationPin;
+    final onMarkerTap = widget.onMarkerTap;
+    final onMapReady = widget.onMapReady;
+    final onUserInteraction = widget.onUserInteraction;
+    final livePin = widget.livePin;
+    final liveHeading = widget.liveHeading;
+
+    final canvasBg = isDark ? AppColors.carbonBackground : AppColors.lightBackground;
+
+    // Camadas caras sob cache: só recalcula o split + reconstrói pills e
+    // strokes quando marcadores, polyline ou tema mudam de verdade.
+    final navigating = widget.isNavigating;
+    if (!_markersEqual(_snapMarkers, markers) ||
+        !_polylineEqual(_snapPolyline, routePolyline) ||
+        _snapDark != isDark ||
+        _snapNavigating != navigating) {
+      _rebuildCachedLayers(
+        markers: markers,
+        routePolyline: routePolyline,
+        isDark: isDark,
+        isNavigating: navigating,
+        onMarkerTap: onMarkerTap,
+      );
+      _snapMarkers = markers;
+      _snapPolyline = routePolyline;
+      _snapDark = isDark;
+      _snapNavigating = navigating;
+    }
+
     // Retina simulada SÓ no satélite (foto não tem rótulo: fica nítida
     // sem efeito colateral). Nas camadas com nome de rua ela encolhe os
     // rótulos à metade e quadruplica os downloads no pinch — por isso fica
@@ -221,6 +408,15 @@ class LogisticsMapCanvas extends StatelessWidget {
     // normais ao mesmo tempo só com vetor (Fase 2).
     final retina = RetinaMode.isHighDensity(context);
     final tileProvider = TileCache.instance.provider;
+    // Offline o pré-download cobre z10–16:
+    // - acima de z16, amplia o z16 do cache em vez de pedir z17/z18 na
+    //   rede (era o "mapa falhado" com a câmera de navegação em 17.2);
+    // - abaixo de z10 não há tile baixado, então o zoom-out trava em z10
+    //   para o mapa nunca apagar ao afastar. Online, limites totais.
+    // (Lido por build — o GPS reconstrói o mapa a cada fix, então atualiza.)
+    final offlineTiles = !ConnectivityService.instance.isOnline.value;
+    final roadsNativeZoom = offlineTiles ? 16 : 20;
+    final minZoom = offlineTiles ? 10.0 : 4.0;
 
     return Stack(
       children: [
@@ -234,7 +430,7 @@ class LogisticsMapCanvas extends StatelessWidget {
             options: MapOptions(
               initialCenter: initialCenter,
               initialZoom: initialZoom,
-              minZoom: 4.0,
+              minZoom: minZoom,
               // 18: acima disso o retina simulado não carrega nada (tela cinza).
               maxZoom: 18.0,
               backgroundColor: canvasBg,
@@ -247,6 +443,9 @@ class LogisticsMapCanvas extends StatelessWidget {
                   onUserInteraction?.call();
                 }
               },
+              // Giro liberado: pinça com dois dedos gira o mapa (pedido de uso
+              // em campo). O modo course-up continua assumindo a rotação por
+              // código durante a navegação.
               interactionOptions: const InteractionOptions(
                 flags: InteractiveFlag.all,
               ),
@@ -254,130 +453,122 @@ class LogisticsMapCanvas extends StatelessWidget {
             children: [
               if (isSatellite)
                 TileLayer(
-                  urlTemplate: _satelliteTile,
+                  urlTemplate: MapTiles.satellite,
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
                   retinaMode: retina,
                   maxZoom: 19,
                   maxNativeZoom: 18,
-                  keepBuffer: 4,
-                  panBuffer: 2,
-                  tileDisplay: const TileDisplay.fadeIn(),
-                  errorTileCallback: (tile, error, stackTrace) {},
+                  // 2/1 são os padrões do flutter_map: menos tiles carregados e
+                  // decodificados fora da tela — menos memória e menos trabalho
+                  // por frame durante o pinch.
+                  keepBuffer: 2,
+                  panBuffer: 1,
+                  tileDisplay: const TileDisplay.instantaneous(),
+                  errorTileCallback: (tile, error, stackTrace) {
+                    debugPrint(
+                        'Tile falhou z${tile.coordinates.z} (${tile.coordinates.x},${tile.coordinates.y}): $error');
+                  },
                 )
               else if (isDark) ...[
-                // Google modo noturno via filtro (1 camada só).
+                // Estilo noturno nativo (dark-v11).
                 TileLayer(
-                  urlTemplate: _googleRoads,
-                  subdomains: _googleSubdomains,
-                  fallbackUrl: _osmFallback,
+                  urlTemplate: MapTiles.roadsDark,
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
-                  tileBuilder: darkModeTileBuilder,
                   retinaMode: false,
                   maxZoom: 18,
-                  maxNativeZoom: 20,
-                  keepBuffer: 4,
-                  panBuffer: 2,
-                  tileDisplay: const TileDisplay.fadeIn(),
-                  errorTileCallback: (tile, error, stackTrace) {},
+                  maxNativeZoom: roadsNativeZoom,
+                  // Dark puro é preto demais na cabine: levanta os pretos
+                  // (~+20, azulado) via GPU. Só nas vias noturnas.
+                  tileBuilder: (context, tileWidget, tile) => ColorFiltered(
+                    colorFilter: _darkLiftFilter,
+                    child: tileWidget,
+                  ),
+                  // 2/1 são os padrões do flutter_map: menos tiles carregados e
+                  // decodificados fora da tela — menos memória e menos trabalho
+                  // por frame durante o pinch.
+                  keepBuffer: 2,
+                  panBuffer: 1,
+                  tileDisplay: const TileDisplay.instantaneous(),
+                  errorTileCallback: (tile, error, stackTrace) {
+                    debugPrint(
+                        'Tile falhou z${tile.coordinates.z} (${tile.coordinates.x},${tile.coordinates.y}): $error');
+                  },
                 ),
               ] else ...[
-                // Rua do Google (fallback OSM se recusar).
+                // Vias no tema claro (streets-v12).
                 TileLayer(
-                  urlTemplate: _googleRoads,
-                  subdomains: _googleSubdomains,
-                  fallbackUrl: _osmFallback,
+                  urlTemplate: MapTiles.roads,
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
                   retinaMode: false,
                   maxZoom: 18,
-                  maxNativeZoom: 20,
-                  keepBuffer: 4,
-                  panBuffer: 2,
-                  tileDisplay: const TileDisplay.fadeIn(),
-                  errorTileCallback: (tile, error, stackTrace) {},
+                  maxNativeZoom: roadsNativeZoom,
+                  // 2/1 são os padrões do flutter_map: menos tiles carregados e
+                  // decodificados fora da tela — menos memória e menos trabalho
+                  // por frame durante o pinch.
+                  keepBuffer: 2,
+                  panBuffer: 1,
+                  tileDisplay: const TileDisplay.instantaneous(),
+                  errorTileCallback: (tile, error, stackTrace) {
+                    debugPrint(
+                        'Tile falhou z${tile.coordinates.z} (${tile.coordinates.x},${tile.coordinates.y}): $error');
+                  },
                 ),
               ],
 
-              // 1. ROTA RESTANTE (paradas futuras): mais fraquinha, suave e translúcida
-              if (remainingLeg.length > 1)
-                PolylineLayer(
-                  polylines: [
-                    Polyline(
-                      points: remainingLeg,
-                      strokeWidth: 4.5,
-                      color: isDark
-                          ? Colors.black.withValues(alpha: 0.20)
-                          : Colors.white.withValues(alpha: 0.50),
-                    ),
-                    Polyline(
-                      points: remainingLeg,
-                      strokeWidth: 3.0,
-                      color: isDark
-                          ? const Color(0xFF60A5FA).withValues(alpha: 0.38)
-                          : const Color(0xFF2563EB).withValues(alpha: 0.28),
-                    ),
-                  ],
-                ),
+              // Camadas caras sob cache (ver _rebuildCachedLayers).
+              ..._cachedLegLayers,
 
-              // 2. ROTA ATÉ A PRÓXIMA PARADA: pintada viva, casing claro e glow (estilo Circuit)
-              if (nextLeg.length > 1)
-                PolylineLayer(
-                  polylines: [
-                    Polyline(
-                      points: nextLeg,
-                      strokeWidth: 12.0,
-                      color: AppColors.routePolylineGlow.withValues(alpha: 0.32),
-                    ),
-                    Polyline(
-                      points: nextLeg,
-                      strokeWidth: 7.0,
-                      color: isDark
-                          ? Colors.white.withValues(alpha: 0.95)
-                          : Colors.white,
-                    ),
-                    Polyline(
-                      points: nextLeg,
-                      strokeWidth: 4.5,
-                      color: AppColors.routePolyline,
-                    ),
-                  ],
-                ),
+              // Paradas compactas estilo Circuit (rotate: true mantém os números
+              // na vertical legíveis). Widget em cache (ver _rebuildCachedLayers).
+              _cachedMarkerLayer ??
+                  MarkerLayer(
+                    rotate: true,
+                    markers: const [],
+                  ),
 
-
-
-              // Paradas compactas estilo Circuit (rotate: true mantém os números na vertical legíveis)
-              MarkerLayer(
-                rotate: true,
-                markers: markers.map((item) {
-                  final isTriple = item.sequenceIndex >= 100;
-                  final double tapWidth = item.isSelected
-                      ? (isTriple ? 48.0 : 42.0)
-                      : (isTriple ? 40.0 : 34.0);
-                  final double tapHeight = item.isSelected ? 32.0 : 28.0;
-
-                  return Marker(
-                    point: item.position,
-                    width: tapWidth,
-                    height: tapHeight,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => onMarkerTap?.call(item.sequenceIndex),
-                      child: Center(
-                        child: _buildStopMarker(item),
-                      ),
-                    ),
-                  );
-                }).toList(),
-              ),
-
-              // GPS atual
-              if (currentLocationPin != null)
+              // GPS atual — via listenables (granular, sem rebuild do pai)
+              // ou snapshot (comportamento antigo, ex.: testes).
+              if (livePin != null)
+                ValueListenableBuilder<LatLng?>(
+                  valueListenable: livePin,
+                  builder: (context, pin, _) {
+                    if (pin == null) return const SizedBox.shrink();
+                    if (liveHeading != null) {
+                      return ValueListenableBuilder<double?>(
+                        valueListenable: liveHeading,
+                        builder: (context, heading, _) => MarkerLayer(
+                          markers: [
+                            Marker(
+                              point: pin,
+                              width: 64,
+                              height: 64,
+                              child: _buildLocationPin(
+                                  headingOverride: heading),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                    return MarkerLayer(
+                      markers: [
+                        Marker(
+                          point: pin,
+                          width: 64,
+                          height: 64,
+                          child: _buildLocationPin(),
+                        ),
+                      ],
+                    );
+                  },
+                )
+              else if (currentLocationPin != null)
                 MarkerLayer(
                   markers: [
                     Marker(
-                      point: currentLocationPin!,
+                      point: currentLocationPin,
                       width: 64,
                       height: 64,
                       child: _buildLocationPin(),
@@ -389,7 +580,7 @@ class LogisticsMapCanvas extends StatelessWidget {
             ),
         ),
 
-        // Atribuição OSM/Esri (exigida por licença)
+        // Atribuição exigida por licença (Mapbox + fonte dos dados)
         Positioned(
           right: 8,
           bottom: 8,
@@ -401,8 +592,8 @@ class LogisticsMapCanvas extends StatelessWidget {
             ),
             child: Text(
               isSatellite
-                  ? '© Esri, Maxar, Earthstar Geographics'
-                  : '© Google',
+                  ? MapTiles.attributionSatellite
+                  : MapTiles.attribution,
               style: const TextStyle(
                 color: Colors.white70,
                 fontSize: 9,
@@ -444,7 +635,7 @@ class LogisticsMapCanvas extends StatelessWidget {
       shadowColor = AppColors.circuitBlue.withValues(alpha: 0.50);
     } else {
       // 4. PENDENTE
-      if (isDark) {
+      if (widget.isDark) {
         bg = const Color(0xFF1E293B);
         borderColor = const Color(0xFF475569);
         textColor = const Color(0xFFF1F5F9);
@@ -475,14 +666,19 @@ class LogisticsMapCanvas extends StatelessWidget {
           color: borderColor,
           width: item.isSelected ? 1.8 : 1.0,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: shadowColor,
-            blurRadius: item.isSelected ? 8 : 3,
-            spreadRadius: item.isSelected ? 1 : 0,
-            offset: Offset(0, item.isSelected ? 2 : 1),
-          ),
-        ],
+        // Fase 3a perf: sombra SÓ no selecionado (1 instância). As outras
+        // 82 pílulas desenham chapadas — BoxShadow por marcador some do
+        // overdraw e o visual quase não muda (borda já dá o recorte).
+        boxShadow: item.isSelected
+            ? [
+                BoxShadow(
+                  color: shadowColor,
+                  blurRadius: 8,
+                  spreadRadius: 1,
+                  offset: const Offset(0, 2),
+                ),
+              ]
+            : null,
       ),
       child: Stack(
         clipBehavior: Clip.none,
@@ -570,29 +766,30 @@ class LogisticsMapCanvas extends StatelessWidget {
     );
   }
 
-  Widget _buildLocationPin() {
-    final heading = headingDegrees;
+  Widget _buildLocationPin({double? headingOverride}) {
+    final heading = headingOverride ?? widget.headingDegrees;
     final angle = (heading != null) ? (heading * pi / 180.0) : 0.0;
+    final navigating = widget.isNavigating;
 
     return Stack(
       alignment: Alignment.center,
       children: [
         // Halo de precisão e pulso
         Container(
-          width: isNavigating ? 56 : 50,
-          height: isNavigating ? 56 : 50,
+          width: navigating ? 56 : 50,
+          height: navigating ? 56 : 50,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: AppColors.circuitBlue.withValues(alpha: isNavigating ? 0.22 : 0.14),
+            color: AppColors.circuitBlue.withValues(alpha: navigating ? 0.22 : 0.14),
             border: Border.all(
-              color: AppColors.circuitBlueGlow.withValues(alpha: isNavigating ? 0.5 : 0.35),
+              color: AppColors.circuitBlueGlow.withValues(alpha: navigating ? 0.5 : 0.35),
               width: 1.5,
             ),
           ),
         ),
 
         // Cursor azul de navegação (estilo Waze/Google Maps Course-Up: aponta sempre para cima da tela)
-        if (isNavigating)
+        if (navigating)
           SizedBox(
             width: 38,
             height: 38,
