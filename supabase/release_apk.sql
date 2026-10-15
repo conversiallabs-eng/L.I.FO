@@ -52,10 +52,10 @@ CREATE POLICY "Anon can read release keys"
 -- ┌───────────────────── EDITE SÓ AS 4 VARIÁVEIS ─────────────────────────┐
 DO $$
 DECLARE
-  v_version TEXT    := '1.0.0';                          -- versionName do APK
-  v_build   INTEGER := 1;                                -- versionCode (+N)
+  v_version TEXT    := '1.0.1';                          -- versionName do APK
+  v_build   INTEGER := 2;                                -- versionCode (+N)
   v_apk_url TEXT    := 'https://lifo.com.br/lifo.apk';   -- URL na Hostinger
-  v_notes   TEXT    := 'Correções de estabilidade e melhorias de desempenho.';
+  v_notes   TEXT    := 'Versão mega ofuscada com melhorias no baú e navegação.';
   v_current TEXT;
 BEGIN
 -- └───────────────────────────────────────────────────────────────────────┘
