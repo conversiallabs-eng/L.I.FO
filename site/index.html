@@ -8,83 +8,97 @@
 <meta property="og:title" content="L.I.F.O. — Logística inteligente. Do baú à última entrega.">
 <meta property="og:url" content="https://lifo.com.br/">
 <style>
-:root{--blue:#0066FF;--blue-glow:#3B82F6;--ink:#0F172A;--mut:#475569;--bg:#F6F8FF;--line:#E2E8F0}
+:root{--blue:#0066FF;--blue-glow:#2979FF;--ink:#0F172A;--mut:#475569;--bg:#F6F8FF;--card-bg:#FFFFFF;--line:#E2E8F0;--line-dark:#CBD5E1;--green:#16A34A;--red:#DC2626}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:Segoe UI,Arial,sans-serif;color:var(--ink);line-height:1.6}
+body{font-family:Segoe UI,system-ui,-apple-system,sans-serif;color:var(--ink);line-height:1.6;background:#FFF}
 .wrap{max-width:1080px;margin:0 auto;padding:0 20px}
-header{position:sticky;top:0;background:#fff;border-bottom:1px solid var(--line);z-index:10}
+header{position:sticky;top:0;background:#fff;border-bottom:1px solid var(--line);z-index:100}
 nav{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;max-width:1080px;margin:0 auto}
 .logo{font-weight:800;font-size:22px}.logo span{color:var(--blue)}
-.links{display:flex;gap:18px;align-items:center}.links a{text-decoration:none;color:var(--mut);font-size:15px}
-.btn{display:inline-block;background:var(--blue);color:#fff;padding:12px 26px;border-radius:10px;text-decoration:none;font-weight:700}
+.links{display:flex;gap:18px;align-items:center}.links a{text-decoration:none;color:var(--mut);font-size:15px;font-weight:600}
+.links a:hover{color:var(--blue)}
+.btn{display:inline-block;background:var(--blue);color:#fff;padding:12px 26px;border-radius:10px;text-decoration:none;font-weight:700;transition:transform 0.2s,box-shadow 0.2s}
+.btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,102,255,0.25)}
 .btn.ghost{background:#fff;color:var(--blue);border:2px solid var(--blue)}
-.hero{background:var(--bg);padding:64px 0;text-align:center}
-.hero h1{font-size:clamp(30px,5vw,52px);line-height:1.15;margin:12px 0}
-.hero p{color:var(--mut);font-size:18px;max-width:640px;margin:0 auto 24px}
-.badges{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px;color:var(--mut);font-size:14px}
-section{padding:56px 0}.kicker{color:var(--blue);font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px}
-h2{font-size:clamp(24px,4vw,36px);margin:8px 0}.sub{color:var(--mut);max-width:640px}
-.grid{display:grid;gap:16px;margin-top:28px}.g3{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
-.g4{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
-.card{border:1px solid var(--line);border-radius:14px;padding:22px;background:#fff}
-.card b.num{color:var(--blue);font-size:13px}.card h3{margin:6px 0;font-size:18px}.card p{color:var(--mut);font-size:15px}
+.hero{background:var(--bg);padding:64px 0;text-align:center;border-bottom:1px solid var(--line)}
+.hero h1{font-size:clamp(30px,5vw,52px);line-height:1.15;margin:12px 0;font-weight:900}
+.hero p{color:var(--mut);font-size:18px;max-width:660px;margin:0 auto 24px;font-weight:500}
+.badges{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px;color:var(--mut);font-size:14px;font-weight:600}
 
-/* ── App Screen Vector Mockups ── */
+section{padding:56px 0}.kicker{color:var(--blue);font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:1px}
+h2{font-size:clamp(24px,4vw,36px);margin:8px 0;font-weight:900;letter-spacing:-0.5px}
+.sub{color:var(--mut);max-width:660px;font-size:16px}
+.grid{display:grid;gap:16px;margin-top:28px}
+.g3{grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
+.card{border:1px solid var(--line);border-radius:14px;padding:22px;background:#fff;box-shadow:0 2px 8px rgba(15,23,42,0.04)}
+.card b.num{color:var(--blue);font-size:13px}.card h3{margin:6px 0;font-size:18px;font-weight:800}.card p{color:var(--mut);font-size:14.5px}
+
+/* ── App Screen Real-Mockups Section (Light Theme) ── */
+#telas{background:var(--bg);border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:64px 0}
 .app-screens-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:32px;margin-top:36px;align-items:start}
 .screen-card{text-align:center}
-.screen-card h3{font-size:18px;color:#fff;margin:18px 0 6px}
-.screen-card p{color:#94A3B8;font-size:14px;line-height:1.4}
-.phone-frame{width:270px;height:530px;background:#000;border:3px solid #334155;border-radius:36px;margin:0 auto;position:relative;box-shadow:0 20px 40px rgba(0,0,0,0.6),0 0 0 1px rgba(255,255,255,0.1);overflow:hidden;text-align:left}
-.phone-notch{width:90px;height:18px;background:#000;border-bottom-left-radius:12px;border-bottom-right-radius:12px;position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:20}
-.phone-screen{width:100%;height:100%;background:#0F172A;color:#fff;font-family:Segoe UI,sans-serif;font-size:11px;display:flex;flex-direction:column;position:relative;overflow:hidden}
-.app-status-bar{height:28px;padding:8px 16px 0;display:flex;justify-content:space-between;font-size:10px;color:#94A3B8;font-weight:600;z-index:10}
+.screen-card h3{font-size:18px;color:var(--ink);margin:18px 0 6px;font-weight:800}
+.screen-card p{color:var(--mut);font-size:14px;line-height:1.45}
 
-/* Map Screen */
-.screen-map{background:#020617}
-.app-header{display:flex;gap:8px;padding:6px 12px;z-index:10}
-.app-icon-btn{width:28px;height:28px;background:#1E293B;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;position:relative}
-.badge-dot{width:6px;height:6px;background:#EF4444;border-radius:50%;position:absolute;top:2px;right:2px}
-.app-search-bar{flex:1;background:#1E293B;border:1px solid #334155;border-radius:8px;padding:6px 10px;font-size:11px;color:#CBD5E1;display:flex;align-items:center}
-.map-canvas{flex:1;position:relative;background:radial-gradient(circle at 50% 50%, #0F172A 0%, #020617 100%)}
-.app-sheet{background:#0F172A;border-top:1.5px solid #3B82F6;border-radius:18px 18px 0 0;padding:12px;margin-top:-20px;z-index:10;box-shadow:0 -10px 25px rgba(0,0,0,0.8)}
-.sheet-handle{width:32px;height:3px;background:#334155;border-radius:2px;margin:0 auto 8px}
-.sheet-title{font-size:12px;font-weight:800;color:#fff;display:flex;justify-content:space-between;align-items:center}
-.pill-bipado{background:rgba(37,99,235,0.2);color:#60A5FA;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:800}
-.sheet-address{color:#94A3B8;font-size:10.5px;margin:3px 0 8px}
-.sheet-bay-badge{background:rgba(0,230,118,0.15);border:1.5px solid #00E676;border-radius:6px;padding:5px 8px;display:flex;align-items:center;gap:6px;font-size:10px;color:#00E676;font-weight:800}
-.bay-dot{width:6px;height:6px;background:#00E676;border-radius:50%}
-.check-tag{margin-left:auto;background:#00E676;color:#000;font-size:8px;padding:1px 4px;border-radius:3px;font-weight:900}
-.nav-btn{width:100%;background:#2563EB;color:#fff;border:none;border-radius:8px;padding:8px;font-weight:800;font-size:11px;margin-top:8px;cursor:pointer}
+/* Realistic Smartphone Frame (Light Mode) */
+.phone-frame{width:280px;height:550px;background:#FFFFFF;border:3.5px solid var(--line-dark);border-radius:38px;margin:0 auto;position:relative;box-shadow:0 18px 36px rgba(15,23,42,0.12),0 0 0 1px rgba(0,0,0,0.05);overflow:hidden;text-align:left}
+.phone-notch{width:90px;height:18px;background:#0F172A;border-bottom-left-radius:12px;border-bottom-right-radius:12px;position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:30}
+.phone-screen{width:100%;height:100%;background:#F1F5F9;color:var(--ink);font-family:Segoe UI,sans-serif;font-size:11px;display:flex;flex-direction:column;position:relative;overflow:hidden}
+.app-status-bar{height:28px;padding:8px 16px 0;display:flex;justify-content:space-between;font-size:10px;color:#64748B;font-weight:700;z-index:20;background:rgba(255,255,255,0.85);backdrop-filter:blur(4px)}
 
-/* Bay Floorplan Screen */
-.screen-bay{background:#0F172A;padding:0 12px 12px}
-.bay-screen-title{font-size:13px;font-weight:800;text-align:center;margin:4px 0 8px}
-.cab-indicator{background:#1E293B;border-radius:8px;padding:6px;text-align:center;font-size:10px;font-weight:800;color:#60A5FA;letter-spacing:1px;margin-bottom:8px}
-.bay-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
-.bay-slot{background:#1E293B;border:1px solid #334155;border-radius:10px;padding:8px;height:72px;display:flex;flex-direction:column;justify-content:space-between}
-.bay-slot.active{border:1.5px solid #00E676;background:rgba(0,230,118,0.08)}
-.slot-head{font-size:10.5px;font-weight:800;display:flex;align-items:center;gap:4px}
-.dot{width:6px;height:6px;border-radius:50%}
-.dot.red{background:#FF1744}.dot.orange{background:#FF9100}.dot.purple{background:#7C4DFF}.dot.blue{background:#2979FF}.dot.cyan{background:#00E5FF}.dot.green{background:#00E676}
-.slot-body{font-size:9.5px;color:#CBD5E1;font-weight:700}.slot-body small{color:#94A3B8;font-weight:400}
-.bay-btn-row{display:flex;gap:6px;margin-top:8px}
-.bay-btn{flex:1;background:transparent;border:1px solid #334155;border-radius:8px;padding:6px;text-align:center;font-size:10px;font-weight:700;color:#94A3B8}
-.bay-btn.disabled{opacity:0.4}
+/* Screen 1: Navigation Overlay Screen */
+.screen-nav{background:#E2E8F0}
+.app-search-header{padding:6px 10px;background:#FFF;border-bottom:1px solid var(--line);display:flex;gap:6px;align-items:center;z-index:20}
+.app-icon-menu{width:26px;height:26px;background:#F1F5F9;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;position:relative;color:#0F172A;font-weight:bold}
+.menu-badge{width:6px;height:6px;background:#DC2626;border-radius:50%;position:absolute;top:2px;right:2px}
+.app-search-input{flex:1;background:#F1F5F9;border:1px solid var(--line);border-radius:8px;padding:5px 8px;font-size:10.5px;color:#475569;display:flex;align-items:center}
 
-/* Scanner Screen */
-.screen-scanner{background:#020617;padding:0 12px 12px}
-.scanner-header{font-size:13px;font-weight:800;text-align:center;margin:4px 0 10px}
-.camera-viewfinder{height:180px;background:#090D16;border-radius:16px;border:1px stroke #1E293B;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}
-.viewfinder-frame{width:160px;height:100px;border:2px dashed #0066FF;border-radius:12px;position:relative}
-.laser-beam{width:100%;height:2px;background:#FF1744;box-shadow:0 0 10px #FF1744;position:absolute;top:40%;animation:scan 2s infinite ease-in-out}
-@keyframes scan{0%{top:20%}50%{top:80%}100%{top:20%}}
-.scanner-barcode{color:#334155;font-size:18px;font-family:monospace;letter-spacing:2px;user-select:none}
-.scan-feedback{margin-top:12px;background:rgba(37,99,235,0.2);border:1px solid #2563EB;border-radius:10px;padding:8px;text-align:center}
-.feedback-badge{color:#60A5FA;font-weight:800;font-size:11px}
-.feedback-sub{color:#94A3B8;font-size:9.5px;margin-top:2px}
-.scan-history{margin-top:10px;display:flex;flex-direction:column;gap:4px}
-.history-item{background:#1E293B;border-radius:6px;padding:6px 10px;display:flex;justify-content:space-between;font-size:10px;color:#CBD5E1}
-.history-item b{color:#00E676}
+.nav-map-area{flex:1;position:relative;background:#E8EEF5;overflow:hidden}
+.nav-card-overlay{background:#FFF;border:1.5px solid var(--blue-glow);border-radius:16px;padding:10px;margin:8px;box-shadow:0 8px 20px rgba(0,102,255,0.15);z-index:20;position:absolute;bottom:0;left:0;right:0}
+.nav-card-header{display:flex;justify-content:space-between;align-items:center;font-size:10px;font-weight:800;color:#0F172A}
+.nav-status-chip{background:#2563EB;color:#FFF;padding:2px 6px;border-radius:4px;font-size:8.5px;font-weight:800;letter-spacing:0.4px}
+.nav-recipient{font-size:13px;font-weight:800;color:#0F172A;margin-top:4px}
+.nav-address{font-size:10.5px;color:#475569;line-height:1.2}
+
+.nav-tracking-box{border:1px solid var(--line);border-radius:6px;padding:5px 8px;margin-top:6px;display:flex;align-items:center;gap:6px;font-size:10px;font-weight:800;color:#475569}
+.nav-tracking-code{font-family:monospace;color:#0F172A;font-size:10.5px;font-weight:900}
+
+.nav-bay-box{background:rgba(0,230,118,0.12);border:1.5px solid #00E676;border-radius:6px;padding:5px 8px;margin-top:5px;display:flex;align-items:center;gap:6px;font-size:10px;color:#008744;font-weight:900}
+.bay-tag{margin-left:auto;background:#00E676;color:#FFF;font-size:8px;padding:1px 4px;border-radius:3px;font-weight:900}
+
+.nav-action-btns{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:8px}
+.action-btn{padding:7px;border-radius:8px;font-size:10px;font-weight:800;text-align:center;border:none;cursor:pointer}
+.action-btn.failed{background:#F87171;color:#881337;border:1px solid #FCA5A5}
+.action-btn.delivered{background:#16A34A;color:#FFF;box-shadow:0 2px 6px rgba(22,163,74,0.3)}
+
+/* Screen 2: Vehicle Bay Floorplan */
+.screen-bay{background:#FFF;padding:0 10px 10px}
+.bay-title{font-size:13px;font-weight:800;text-align:center;margin:4px 0 6px;color:#0F172A}
+.cab-banner{background:#F1F5F9;border-radius:8px;padding:5px;text-align:center;font-size:9.5px;font-weight:800;color:#2563EB;letter-spacing:1px;margin-bottom:6px}
+.bay-grid-view{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.bay-cell{background:#F8FAFC;border:1px solid #CBD5E1;border-radius:10px;padding:7px;height:74px;display:flex;flex-direction:column;justify-content:space-between}
+.bay-cell.active-cell{border:2px solid #00E676;background:rgba(0,230,118,0.08)}
+.cell-head{font-size:10px;font-weight:800;display:flex;align-items:center;gap:4px;color:#0F172A}
+.c-dot{width:6px;height:6px;border-radius:50%}
+.c-dot.red{background:#FF1744}.c-dot.orange{background:#FF9100}.c-dot.purple{background:#7C4DFF}.c-dot.blue{background:#2979FF}.c-dot.cyan{background:#00E5FF}.c-dot.green{background:#00E676}
+.cell-info{font-size:9px;color:#0F172A;font-weight:800}.cell-info small{color:#64748B;font-weight:600;display:block}
+.bay-controls{display:flex;gap:6px;margin-top:8px}
+.bay-ctrl-btn{flex:1;background:#F1F5F9;border:1px solid #CBD5E1;border-radius:8px;padding:6px;text-align:center;font-size:9.5px;font-weight:700;color:#475569}
+
+/* Screen 3: Delivery Scanner with GPS Check */
+.screen-scanner{background:#F8FAFC;padding:0 10px 10px}
+.scanner-title{font-size:13px;font-weight:800;text-align:center;margin:4px 0 6px;color:#0F172A}
+.scanner-camera{height:165px;background:#0F172A;border-radius:14px;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.scanner-target{width:140px;height:90px;border:2px dashed #0066FF;border-radius:10px;position:relative}
+.scanner-laser{width:100%;height:2px;background:#FF1744;box-shadow:0 0 8px #FF1744;position:absolute;top:40%;animation:scanLaser 2s infinite ease-in-out}
+@keyframes scanLaser{0%{top:20%}50%{top:80%}100%{top:20%}}
+.scanner-lines{color:#334155;font-size:16px;font-family:monospace;letter-spacing:2px;user-select:none}
+
+.scan-result-card{margin-top:8px;background:#EFF6FF;border:1.5px solid #2563EB;border-radius:10px;padding:8px;text-align:center}
+.result-head{color:#1D4ED8;font-weight:900;font-size:10.5px}
+.gps-check-banner{margin-top:4px;background:#DCFCE7;border:1px solid #16A34A;border-radius:6px;padding:4px 6px;color:#15803D;font-weight:800;font-size:9.5px;display:flex;align-items:center;justify-content:center;gap:4px}
+.delivery-confirm-btn{width:100%;background:#16A34A;color:#FFF;border:none;border-radius:8px;padding:8px;font-weight:800;font-size:11px;margin-top:8px;box-shadow:0 2px 8px rgba(22,163,74,0.3);cursor:pointer}
 
 .stack{max-width:420px;margin:28px auto 0;border:1px solid var(--line);border-radius:14px;overflow:hidden}
 .slot{padding:12px 16px;border-top:1px solid var(--line);display:flex;justify-content:space-between;font-weight:700}
@@ -104,9 +118,10 @@ input,textarea{padding:12px;border-radius:10px;border:1px solid var(--line);font
 <header><nav>
 <div class="logo">L.I.F.O<span>.</span></div>
 <div class="links">
-<a href="#telas">O App</a><a href="#como">Como funciona</a><a href="#recursos">Recursos</a><a href="#planos">Planos</a><a href="#faq">FAQ</a>
+<a href="#telas">O App</a><a href="#scanner">Bipador</a><a href="#como">Como funciona</a><a href="#planos">Planos</a><a href="#faq">FAQ</a>
 <a class="btn" href="lifo.apk">Baixar o app</a>
 </div></nav></header>
+
 <div class="hero"><div class="wrap">
 <div class="kicker">Logística inteligente. Do baú à última entrega.</div>
 <h1>Feito por entregadores,<br>pra quem entrega.</h1>
@@ -115,134 +130,183 @@ input,textarea{padding:12px;border-radius:10px;border:1px solid var(--line);font
 <div class="badges"><span>30 dias grátis</span><span>· Só Pix, sem cartão</span><span>· Em breve na Play Store</span></div>
 </div></div>
 
-<!-- Showcase de Telas do App -->
-<section id="telas" style="background:#0F172A;color:#fff;padding:64px 0;overflow:hidden">
+<!-- Showcase de Telas Reais do App (Light Theme) -->
+<section id="telas">
 <div class="wrap">
-<div class="kicker" style="color:#60A5FA">Conheça o L.I.F.O. em Ação</div>
-<h2 style="color:#fff">Interface desenhada para a rotina do entregador.</h2>
-<p class="sub" style="color:#94A3B8">Do mapa logístico à organização física do baú: veja como o app guia cada passo do seu dia.</p>
+<div class="kicker">Conheça o L.I.F.O. em Ação</div>
+<h2>A interface real que o motorista usa na cabine.</h2>
+<p class="sub">Projetado com alto contraste e clareza para ler fácil no sol forte e decidir em segundos.</p>
 
 <div class="app-screens-grid">
-  <!-- Screen 1: Mapa e Navegação -->
+  <!-- Screen 1: Navegação Ativa com Card de Entrega e Local do Baú -->
   <div class="screen-card">
     <div class="phone-frame">
       <div class="phone-notch"></div>
-      <div class="phone-screen screen-map">
+      <div class="phone-screen screen-nav">
         <div class="app-status-bar"><span>20:30</span><span>5G ⚡ 100%</span></div>
-        <div class="app-header">
-          <div class="app-icon-btn">☰<span class="badge-dot"></span></div>
-          <div class="app-search-bar">🔍 Rua Augusta, 100...</div>
+        <div class="app-search-header">
+          <div class="app-icon-menu">☰<span class="menu-badge"></span></div>
+          <div class="app-search-input">🔍 Adicionar parada (ex: Rua Augusta)...</div>
         </div>
-        <!-- Vector Map -->
-        <div class="map-canvas">
-          <svg width="100%" height="100%" viewBox="0 0 280 220">
-            <path d="M-10,120 Q80,110 140,160 T290,170" stroke="#1E293B" stroke-width="18" fill="none"/>
-            <path d="M120,-10 L140,270" stroke="#1E293B" stroke-width="14" fill="none"/>
-            <path d="M30,120 L90,115 L140,160 L210,165" stroke="#0066FF" stroke-width="6" stroke-linecap="round" fill="none"/>
-            <circle cx="30" cy="120" r="11" fill="#16A34A" />
-            <text x="30" y="124" fill="#fff" font-size="10" font-weight="bold" text-anchor="middle">✓</text>
-            <circle cx="140" cy="160" r="13" fill="#0066FF" stroke="#fff" stroke-width="2"/>
-            <text x="140" y="164" fill="#fff" font-size="11" font-weight="bold" text-anchor="middle">1</text>
-            <circle cx="210" cy="165" r="11" fill="#3B82F6" opacity="0.8"/>
-            <text x="210" y="169" fill="#fff" font-size="10" font-weight="bold" text-anchor="middle">2</text>
+
+        <!-- Vector Map Canvas -->
+        <div class="nav-map-area">
+          <svg width="100%" height="100%" viewBox="0 0 280 200">
+            <!-- Road grid -->
+            <path d="M-10,100 Q80,90 140,140 T290,150" stroke="#CBD5E1" stroke-width="20" fill="none"/>
+            <path d="M120,-10 L140,250" stroke="#CBD5E1" stroke-width="16" fill="none"/>
+            <!-- Polyline -->
+            <path d="M30,100 L90,95 L140,140 L210,145" stroke="#2979FF" stroke-width="6" stroke-linecap="round" fill="none"/>
+            <!-- Completed pin -->
+            <circle cx="30" cy="100" r="11" fill="#16A34A"/>
+            <text x="30" y="104" fill="#fff" font-size="10" font-weight="bold" text-anchor="middle">✓</text>
+            <!-- Current active pin -->
+            <circle cx="140" cy="140" r="14" fill="#0066FF" stroke="#fff" stroke-width="2.5"/>
+            <text x="140" y="144" fill="#fff" font-size="11" font-weight="bold" text-anchor="middle">1</text>
+            <!-- Next pin -->
+            <circle cx="210" cy="145" r="11" fill="#3B82F6" opacity="0.85"/>
+            <text x="210" y="149" fill="#fff" font-size="10" font-weight="bold" text-anchor="middle">2</text>
           </svg>
-        </div>
-        <!-- Bottom Sheet -->
-        <div class="app-sheet">
-          <div class="sheet-handle"></div>
-          <div class="sheet-title"><span>Parada #1 • DHKBXD</span><span class="pill-bipado">2/2 BIPADOS</span></div>
-          <div class="sheet-address">R. Tom Jobim, 31 — Centro</div>
-          <div class="sheet-bay-badge">
-            <span class="bay-dot"></span>
-            <span>BAÚ: PORTA TRASEIRA</span>
-            <span class="check-tag">✓ BIPADO</span>
+
+          <!-- Active Navigation Card Overlay -->
+          <div class="nav-card-overlay">
+            <div class="nav-card-header">
+              <span>1/82, Chegada ≈ 20:54</span>
+              <span class="nav-status-chip">ROTA EM ANDAMENTO</span>
+            </div>
+            <div class="nav-recipient">DHKBXD</div>
+            <div class="nav-address">R. Tom Jobim, 31 — Centro</div>
+
+            <div class="nav-tracking-box">
+              <span>📷</span>
+              <span>RASTREIO:</span>
+              <span class="nav-tracking-code">BR2636935367A</span>
+              <span style="margin-left:auto;color:#2563EB">1 vol</span>
+            </div>
+
+            <div class="nav-bay-box">
+              <span>📦</span>
+              <span>LOCAL NO BAÚ: PORTA TRASEIRA</span>
+              <span class="bay-tag">✓ BIPADO</span>
+            </div>
+
+            <div class="nav-action-btns">
+              <button class="action-btn failed">✖ Não entregue</button>
+              <button class="action-btn delivered">✓ Entregue</button>
+            </div>
           </div>
-          <button class="nav-btn">▲ Continuar 1/82</button>
         </div>
       </div>
     </div>
-    <h3>1. Navegação & Rota LIFO</h3>
-    <p>Acompanhe o caminho no mapa e saiba exatamente qual pacote pegar na próxima parada.</p>
+    <h3>1. Card da Parada & Local no Baú</h3>
+    <p>O card na tela de navegação avisa na hora em qual compartimento pegar o pacote antes de desembarcar.</p>
   </div>
 
-  <!-- Screen 2: Planta do Baú -->
+  <!-- Screen 2: Planta do Baú LIFO (6 Zonas) -->
   <div class="screen-card">
     <div class="phone-frame">
       <div class="phone-notch"></div>
       <div class="phone-screen screen-bay">
         <div class="app-status-bar"><span>20:30</span><span>5G ⚡ 100%</span></div>
-        <div class="bay-screen-title">Compartimento de Carga LIFO</div>
-        <div class="cab-indicator">🚗 FRENTE DO VEÍCULO</div>
+        <div class="bay-title">Compartimento de Carga LIFO</div>
+        <div class="cab-banner">🚗 FRENTE DO VEÍCULO</div>
 
-        <div class="bay-grid">
-          <div class="bay-slot">
-            <div class="slot-head"><span class="dot red"></span> Fundo Esquerdo</div>
-            <div class="slot-body">1 parada • 1 vol<br><small>Descarregar #6</small></div>
+        <div class="bay-grid-view">
+          <div class="bay-cell">
+            <div class="cell-head"><span class="c-dot red"></span> Fundo Esquerdo</div>
+            <div class="cell-info">1 parada • 1 vol<small>Descarregar #6</small></div>
           </div>
-          <div class="bay-slot">
-            <div class="slot-head"><span class="dot orange"></span> Fundo Direito</div>
-            <div class="slot-body"><small>⊕ Toque p/ bipar</small></div>
+          <div class="bay-cell">
+            <div class="cell-head"><span class="c-dot orange"></span> Fundo Direito</div>
+            <div class="cell-info"><small>⊕ Toque p/ bipar</small></div>
           </div>
-          <div class="bay-slot">
-            <div class="slot-head"><span class="dot purple"></span> Meio Esquerdo</div>
-            <div class="slot-body"><small>⊕ Toque p/ bipar</small></div>
+          <div class="bay-cell">
+            <div class="cell-head"><span class="c-dot purple"></span> Meio Esquerdo</div>
+            <div class="cell-info"><small>⊕ Toque p/ bipar</small></div>
           </div>
-          <div class="bay-slot">
-            <div class="slot-head"><span class="dot blue"></span> Meio Direito</div>
-            <div class="slot-body"><small>⊕ Toque p/ bipar</small></div>
+          <div class="bay-cell">
+            <div class="cell-head"><span class="c-dot blue"></span> Meio Direito</div>
+            <div class="cell-info"><small>⊕ Toque p/ bipar</small></div>
           </div>
-          <div class="bay-slot">
-            <div class="slot-head"><span class="dot cyan"></span> Porta Lateral</div>
-            <div class="slot-body"><small>⊕ Toque p/ bipar</small></div>
+          <div class="bay-cell">
+            <div class="cell-head"><span class="c-dot cyan"></span> Porta Lateral</div>
+            <div class="cell-info"><small>⊕ Toque p/ bipar</small></div>
           </div>
-          <div class="bay-slot active">
-            <div class="slot-head"><span class="dot green"></span> Porta Traseira</div>
-            <div class="slot-body">1 parada • 2 vol<br><small>Descarregar #1</small></div>
+          <div class="bay-cell active-cell">
+            <div class="cell-head"><span class="c-dot green"></span> Porta Traseira</div>
+            <div class="cell-info">1 parada • 2 vol<small>Descarregar #1</small></div>
           </div>
         </div>
 
-        <div class="bay-btn-row">
-          <div class="bay-btn">+ Adicionar</div>
-          <div class="bay-btn disabled">− Excluir</div>
+        <div class="bay-controls">
+          <div class="bay-ctrl-btn">+ Adicionar</div>
+          <div class="bay-ctrl-btn" style="opacity:0.5">− Excluir último</div>
         </div>
+        <p style="font-size:8.5px;color:#64748B;text-align:center;margin-top:6px">6 zonas base fixas; personalize os nomes como quiser.</p>
       </div>
     </div>
-    <h3>2. Baú Interativo em 6 Zonas</h3>
-    <p>Veja a planta do seu veículo. A primeira entrega fica à mão na porta traseira.</p>
+    <h3>2. Planta Interativa do Baú</h3>
+    <p>Organize o veículo em até 12 compartimentos. A 1ª entrega fica sempre à mão na porta traseira.</p>
   </div>
 
-  <!-- Screen 3: Scanner de Carga -->
+  <!-- Screen 3: Bipador com Validação de Pacote + GPS -->
   <div class="screen-card">
     <div class="phone-frame">
       <div class="phone-notch"></div>
       <div class="phone-screen screen-scanner">
         <div class="app-status-bar"><span>20:30</span><span>5G ⚡ 100%</span></div>
-        <div class="scanner-header">Leitor de Carga LIFO</div>
+        <div class="scanner-title">Conferência na Entrega</div>
 
-        <div class="camera-viewfinder">
-          <div class="laser-beam"></div>
-          <div class="viewfinder-frame"></div>
-          <div class="scanner-barcode">|||| | ||||| ||| ||||</div>
+        <div class="scanner-camera">
+          <div class="scanner-laser"></div>
+          <div class="scanner-target"></div>
+          <div class="scanner-lines">|||| | ||||| ||| ||||</div>
         </div>
 
-        <div class="scan-feedback">
-          <div class="feedback-badge">✓ VOL-0042 CONFIRMADO</div>
-          <div class="feedback-sub">Parada #1 • Porta Traseira</div>
+        <div class="scan-result-card">
+          <div class="result-head">✓ PARADA #1 CONFIRMADA</div>
+          <div style="font-size:9.5px;color:#475569;margin-top:2px">Pacote BR2636935367A conferido</div>
+          <div class="gps-check-banner">
+            <span>📍</span>
+            <span>GPS no endereço correto (12m do ponto)</span>
+          </div>
         </div>
 
-        <div class="scan-history">
-          <div class="history-item"><span>VOL-0041</span><b>Parada #1 ✓</b></div>
-          <div class="history-item"><span>VOL-0042</span><b>Parada #1 ✓</b></div>
-        </div>
+        <button class="delivery-confirm-btn">✓ Confirmar Entrega Realizada</button>
       </div>
     </div>
-    <h3>3. Leitura Ultra-Rápida</h3>
-    <p>Bipa com a câmera do celular, confira os pacotes e evite entregas trocadas no caminho.</p>
+    <h3>3. Bipador de Entrega + GPS</h3>
+    <p>Bipa o pacote na porta do cliente. O app valida se a caixa pertence à parada e se você está no local exato.</p>
   </div>
 </div>
 </div></section>
 
-<section><div class="wrap">
+<!-- Destaque Especial: Bipador na Hora da Entrega -->
+<section id="scanner" style="background:#FFF"><div class="wrap">
+<div class="kicker">Segurança na Hora da Entrega</div>
+<h2>Bipou na porta do cliente, conferiu na hora. Zerou erro de troca.</h2>
+<p class="sub">Entregar pacote trocado ou em endereço errado destrói o dia de qualquer motorista. O L.I.F.O. resolve isso na hora do desembarque.</p>
+
+<div class="grid g3" style="margin-top:32px">
+<div class="card" style="border:2px solid var(--blue)">
+  <b class="num">01</b>
+  <h3>Bipagem Dupla (Carga + Entrega)</h3>
+  <p>Bipe no carregamento para colocar no compartimento certo do baú e bipe de novo na porta do cliente para garantir que pegou a caixa certa.</p>
+</div>
+<div class="card" style="border:2px solid var(--blue)">
+  <b class="num">02</b>
+  <h3>Validação GPS + QR Code</h3>
+  <p>Se você tentar entregar uma caixa trocada ou bipar a 500 metros do endereço do cliente, o L.I.F.O. dispara um alerta vermelho de divergência de local.</p>
+</div>
+<div class="card" style="border:2px solid var(--blue)">
+  <b class="num">03</b>
+  <h3>Etiquta Rasurada? Sem Problema</h3>
+  <p>Câmera não leu porque a etiqueta molhou ou rasgou? Digite o código de rastreio no teclado para atribuir ou conferir a entrega manualmente.</p>
+</div>
+</div>
+</div></section>
+
+<section style="background:var(--bg)"><div class="wrap">
 <div class="kicker">Seu baú, na ordem certa LIFO</div>
 <h2>A primeira a sair fica por último no baú. O app mostra onde pôr cada caixa.</h2>
 <div class="stack">
@@ -256,7 +320,8 @@ input,textarea{padding:12px;border-radius:10px;border:1px solid var(--line);font
 <div class="kicker" style="margin-top:36px">Uma rota. Menos voltas.</div>
 <div class="route"><div class="stop">1</div><div class="stop">2</div><div class="stop">3</div><div class="stop">4</div><div class="stop">5</div></div>
 </div></section>
-<section style="background:var(--bg)"><div class="wrap">
+
+<section><div class="wrap">
 <div class="kicker">Por que a gente existe</div>
 <h2>A gente rodava com app caro que não entendia a nossa rua. Então construímos o nosso.</h2>
 <div class="grid g3">
@@ -265,28 +330,31 @@ input,textarea{padding:12px;border-radius:10px;border:1px solid var(--line);font
 <div class="card"><b class="num">03</b><h3>Rota com memória</h3><p>Otimizou e não gostou? A rota antiga continua salva, volta com 1 toque. Nada se perde.</p></div>
 <div class="card"><b class="num">04</b><h3>Libere e pague</h3><p>Venceu na rua e já pagou antes? O LIFO libera 5 dias na confiança — você paga depois e a renovação sai por 25 dias. Nenhum app faz isso.</p></div>
 </div></div></section>
-<section id="como"><div class="wrap">
+
+<section id="como" style="background:var(--bg)"><div class="wrap">
 <div class="kicker">01 / Como funciona</div>
 <h2>Menos improviso. Mais entregas no caminho.</h2>
 <p class="sub">Da conferência ao destino, um fluxo simples que acompanha o seu dia de trabalho.</p>
 <div class="grid g4">
 <div class="card"><b class="num">01</b><h3>Importe o manifesto</h3><p>Traga sua lista de entregas em CSV ou Excel. Tudo começa com a carga organizada.</p></div>
-<div class="card"><b class="num">02</b><h3>Bipe a carga</h3><p>Use a câmera como leitor de código de barras e confira cada pacote.</p></div>
+<div class="card"><b class="num">02</b><h3>Bipe a carga</h3><p>Use a câmera como leitor de código de barras e confira cada pacote no baú.</p></div>
 <div class="card"><b class="num">03</b><h3>Carregue na ordem LIFO</h3><p>Veja o mapa do baú. A última entrega entra primeiro; a primeira fica à mão.</p></div>
-<div class="card"><b class="num">04</b><h3>Siga a rota otimizada</h3><p>Mapa e GPS para seguir o caminho e focar no que importa: entregar.</p></div>
+<div class="card"><b class="num">04</b><h3>Siga a rota e bipe no destino</h3><p>Navegue com GPS e confirme o pacote no momento do desembarque.</p></div>
 </div></div></section>
-<section id="recursos" style="background:var(--bg)"><div class="wrap">
+
+<section id="recursos"><div class="wrap">
 <div class="kicker">02 / Recursos</div>
 <h2>Seu copiloto logístico. Mesmo quando o sinal some.</h2>
 <div class="grid g3">
-<div class="card"><h3>Manifesto com versionamento</h3><p>Acompanhe alterações na lista de entregas sem perder a organização.</p></div>
-<div class="card"><h3>Scanner de pacotes</h3><p>Confira os códigos de barras com a câmera do seu celular.</p></div>
-<div class="card"><h3>Baú espacial LIFO</h3><p>Saiba onde colocar cada pacote para encontrar a próxima entrega.</p></div>
-<div class="card"><h3>Mapa logístico offline-first</h3><p>A rota continua disponível mesmo quando o sinal fica pelo caminho.</p></div>
-<div class="card"><h3>Sincronização em nuvem</h3><p>Reconectou? Sincronize os dados e mantenha o trabalho atualizado.</p></div>
-<div class="card"><h3>Funciona sem internet</h3><p>Continue conferindo e organizando a carga nas áreas sem cobertura.</p></div>
+<div class="card"><h3>Manifesto com versionamento</h3><p>Acompanhe alterações na lista de entregas e volte para versões anteriores quando quiser.</p></div>
+<div class="card"><h3>Scanner de pacotes na entrega</h3><p>Confira os códigos de barras com a câmera e verifique o GPS do local em tempo real.</p></div>
+<div class="card"><h3>Baú espacial LIFO (até 12 zonas)</h3><p>Saiba onde colocar cada pacote para encontrar a próxima entrega sem revirar a carga.</p></div>
+<div class="card"><h3>Mapa logístico offline-first</h3><p>A rota continua disponível e calculada pelo SQLite mesmo quando o sinal fica pelo caminho.</p></div>
+<div class="card"><h3>Sincronização em nuvem</h3><p>Reconectou? Sincronize os dados e mantenha o histórico atualizado no Supabase.</p></div>
+<div class="card"><h3>Libere e Pague na confiança</h3><p>Se vencer no meio da rota, libere 5 dias direto no app para não travar seu dia de trabalho.</p></div>
 </div></div></section>
-<section id="planos"><div class="wrap">
+
+<section id="planos" style="background:var(--bg)"><div class="wrap">
 <div class="kicker">03 / Planos</div>
 <h2>Mais organização. Um custo que cabe na rota.</h2>
 <div class="grid g3">
@@ -297,21 +365,25 @@ input,textarea{padding:12px;border-radius:10px;border:1px solid var(--line);font
 <div class="card" style="margin-top:16px;border:2px dashed var(--blue);background:#F0F9FF"><h3>🤝 Libere e pague — só o LIFO confia em você</h3><p>Venceu no meio da rota e já é pagante? Libere <b>5 dias na confiança</b> direto no app e continue trabalhando. Quando pagar, a renovação libera <b>25 dias</b> (5 já usados na confiança). Sem travar seu dia.</p></div>
 <p class="sub" style="margin-top:16px">Pagamento exclusivamente via Pix. Aplicativo apenas para Android, em breve na Google Play Store.</p>
 </div></section>
+
 <section id="baixar" style="background:var(--blue);color:#fff;text-align:center"><div class="wrap">
 <h2 style="color:#fff">A próxima entrega começa com um baú organizado.</h2>
 <p style="color:#DCE7FF">Android 7 ou superior · Câmera para bipar os pacotes · Em breve na Google Play Store</p><br>
 <a class="btn" style="background:#fff;color:var(--blue)" href="lifo.apk">Baixar o app</a>
 </div></section>
+
 <section id="faq"><div class="wrap">
 <div class="kicker">04 / Dúvidas frequentes</div>
 <h2>Antes de pegar a estrada.</h2>
 <details><summary>O que significa LIFO?</summary><p>Last In, First Out: a última entrega entra primeiro no fundo do baú, e a primeira fica à mão na porta. O app monta esse mapa pra você.</p></details>
 <details><summary>Preciso de internet para usar?</summary><p>Não. O app é offline-first: confere, bipa e organiza sem sinal; sincroniza quando reconectar.</p></details>
+<details><summary>Como o bipador evita erros na hora de entregar?</summary><p>Ao bipar o pacote na porta do cliente, o app verifica se o código bate com a parada ativa e se o seu GPS está no endereço correto, disparando um alerta vermelho se houver divergência.</p></details>
 <details><summary>Quais celulares são compatíveis?</summary><p>Android 7 ou superior, com câmera para bipar os pacotes.</p></details>
 <details><summary>Como faço o pagamento?</summary><p>Via Pix: R$ 19,90 por mês ou R$ 200 por ano, sem cobrança automática. Você renova quando quiser.</p></details>
 <details><summary>E se vencer no meio da rota?</summary><p>Se você já pagou pelo menos uma vez, o app libera 5 dias na confiança para não travar seu trabalho. Quando pagar, a renovação libera 25 dias (5 já usados na confiança). Trial sem pagamento não tem confiança.</p></details>
 <details><summary>Tem versão web ou para iPhone?</summary><p>Por enquanto só Android. A versão web e iOS estão no roteiro da equipe.</p></details>
 </div></section>
+
 <footer><div class="wrap">
 <div class="logo" style="color:#fff">L.I.F.O<span>.</span></div>
 <p>Inteligência na carga. Agilidade na entrega. Feito em Florianópolis, Brasil.<br>E-mail: contato@lifo.com.br</p>
