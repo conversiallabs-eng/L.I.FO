@@ -6376,7 +6376,8 @@ class _OfflineBadge extends StatelessWidget {
     return ValueListenableBuilder<bool>(
       valueListenable: ConnectivityService.instance.isOnline,
       builder: (context, online, _) {
-        final show = !online || isOfflineAuth;
+        // Se o celular está online (tem internet conectada), NÃO exibe o selo de offline.
+        final show = !online;
         if (!show) return const SizedBox.shrink();
         return Padding(
           padding: const EdgeInsets.only(top: 56),
@@ -6390,20 +6391,18 @@ class _OfflineBadge extends StatelessWidget {
                 color: Colors.orange.withValues(alpha: 0.6),
               ),
             ),
-            child: Row(
+            child: const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(
+                Icon(
                   Icons.cloud_off,
                   size: 13,
                   color: Colors.orange,
                 ),
-                const SizedBox(width: 6),
+                SizedBox(width: 6),
                 Text(
-                  online
-                      ? 'SESSÃO OFFLINE • dados locais'
-                      : 'OFFLINE • mapa e rotas locais',
-                  style: const TextStyle(
+                  'OFFLINE • mapa e rotas locais',
+                  style: TextStyle(
                     color: Colors.white,
                     fontSize: 10.5,
                     fontWeight: FontWeight.w700,
