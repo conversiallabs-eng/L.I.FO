@@ -479,6 +479,7 @@ class _LogisticsMapCanvasState extends State<LogisticsMapCanvas> {
               if (isSatellite)
                 TileLayer(
                   urlTemplate: MapTiles.satellite,
+                  fallbackUrl: MapTiles.satelliteFallback,
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
                   retinaMode: retina,

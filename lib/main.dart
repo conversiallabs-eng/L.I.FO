@@ -59,6 +59,12 @@ void main() async {
         .catchError((_) {}),
   ]);
 
+  // Atualiza chaves dinâmicas do mapa (Mapbox / Carto) do Supabase em background.
+  // ignore: unawaited_futures
+  MapConfigService.instance.refresh().catchError((e) {
+    debugPrint('MapConfigService: erro ao atualizar chaves: $e');
+  });
+
   // Pré-carrega o motor vetorial OpenFreeMap (Liberty & Dark) para o mapa abrir instantâneo.
   // ignore: unawaited_futures
   VectorStyleService.instance.preload();

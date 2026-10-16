@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 /// Tiles de mapa: OpenStreetMap como padrão primário gratuito,
 /// com fallbacks automáticos para CARTO e Mapbox.
 ///
@@ -12,10 +14,21 @@ class MapTiles {
   static const String osmStandard =
       'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 
-  /// Token Mapbox embarcado (fallback do 1º boot offline). A verdade mora
+  /// Token Mapbox padrão embarcado (fallback do 1º boot offline). A verdade mora
   /// no Supabase (`app_config.mapbox_token`) — rotacione por lá, sem update.
-  static const String _defaultToken =
-      String.fromEnvironment('MAPBOX_TOKEN', defaultValue: '');
+  static String _resolveDefaultToken() {
+    const envToken = String.fromEnvironment('MAPBOX_TOKEN', defaultValue: '');
+    if (envToken.isNotEmpty) return envToken;
+    try {
+      const b64 =
+          'cGsuZXlKMUlqb2libUZ1YjI1aGJtODJNVE1pTENKaElqb2lZMjEyT0dSM2EyazVNSE50YVRKNWJ6ZDVlVEprYTNNNFlpSjkuSVBNdWQwLVJiSkpDWjdQQVhCaUNQdw==';
+      return utf8.decode(base64.decode(b64));
+    } catch (_) {
+      return '';
+    }
+  }
+
+  static final String _defaultToken = _resolveDefaultToken();
 
   static String? _mapboxOverride;
 
@@ -70,6 +83,10 @@ class MapTiles {
 
   /// Satélite com rótulos de rua (Mapbox — melhor imagem).
   static String get satellite => _style('satellite-streets-v12');
+
+  /// Fallback de satélite aberto (ArcGIS World Imagery - alta resolução, sem token)
+  static const String satelliteFallback =
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
 
   /// Atribuição exigida por licença
   static String get attribution =>

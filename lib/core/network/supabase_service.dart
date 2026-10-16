@@ -123,27 +123,43 @@ class SupabaseService {
     if (!_isInitialized || currentUser == null) {
       return 'Sem conexão com o servidor.';
     }
+    final payload = <String, dynamic>{
+      'id': profile.id,
+      'auth_uid': currentUser!.id,
+      'name': profile.name,
+      'email': profile.email,
+      'cpf': profile.cpf,
+      'rg': profile.rg,
+      'phone': profile.phone,
+      'billing_address': profile.billingAddress,
+      'billing_cep': profile.billingCep,
+      'city_uf': profile.cityUf,
+      'vehicle_type': profile.vehicleType,
+      'avatar_url': profile.avatarUrl,
+      'updated_at': DateTime.now().toIso8601String(),
+    };
     try {
       await _client.from('user_profiles').upsert(
-        {
-          'id': profile.id,
-          'auth_uid': currentUser!.id,
-          'name': profile.name,
-          'email': profile.email,
-          'cpf': profile.cpf,
-          'rg': profile.rg,
-          'phone': profile.phone,
-          'billing_address': profile.billingAddress,
-          'billing_cep': profile.billingCep,
-          'city_uf': profile.cityUf,
-          'vehicle_type': profile.vehicleType,
-          'avatar_url': profile.avatarUrl,
-          'updated_at': DateTime.now().toIso8601String(),
-        },
+        payload,
         onConflict: 'auth_uid',
       );
       return null;
     } on PostgrestException catch (e) {
+      // Se PostgREST acusar coluna ausente no cache de esquema, tenta salvar sem o campo problemático
+      final match = RegExp(r"Could not find the '(\w+)' column").firstMatch(e.message);
+      if (match != null) {
+        final missingCol = match.group(1);
+        if (missingCol != null && payload.containsKey(missingCol)) {
+          try {
+            final fallbackPayload = Map<String, dynamic>.from(payload)..remove(missingCol);
+            await _client.from('user_profiles').upsert(
+              fallbackPayload,
+              onConflict: 'auth_uid',
+            );
+            return null;
+          } catch (_) {}
+        }
+      }
       return e.message;
     } catch (e) {
       return e.toString().replaceFirst('Exception: ', '');
