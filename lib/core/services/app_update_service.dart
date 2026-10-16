@@ -378,7 +378,14 @@ class AppUpdateService {
 
       final client = http.Client();
       try {
-        final req = http.Request('GET', Uri.parse(release.apkUrl));
+        // URL única por release: o CDN da Hostinger já serviu o APK antigo
+        // em cache após o deploy (loop "atualização disponível" infinito).
+        final base = Uri.parse(release.apkUrl);
+        final url = base.replace(queryParameters: {
+          ...base.queryParameters,
+          'v': '${release.version}-${release.build}',
+        });
+        final req = http.Request('GET', url);
         final res = await client
             .send(req)
             .timeout(const Duration(seconds: 30));
