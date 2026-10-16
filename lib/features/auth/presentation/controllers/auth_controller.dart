@@ -907,7 +907,7 @@ class AuthController extends StateNotifier<AuthState> {
             await SupabaseService.instance.startTrial(deviceFingerprint: fp);
         if (trial != null && trial['ok'] == false) {
           final msg = trial['message'] as String? ??
-              'Período de teste já utilizado neste CPF ou aparelho nos últimos 12 meses.';
+              'O período de teste gratuito é concedido apenas 1 vez por CPF (vitalício) e já foi utilizado.';
           final expiredUser = newUser.copyWith(
             expiresAt: DateTime.now().subtract(const Duration(hours: 1)),
             plan: 'Assinatura Necessária',
@@ -1021,7 +1021,7 @@ class AuthController extends StateNotifier<AuthState> {
 
       if (trial == null || trial['ok'] != true) {
         final reason = trial?['message'] as String? ??
-            'Período de teste já utilizado neste aparelho ou CPF nos últimos 12 meses.';
+            'O período de teste gratuito é concedido apenas 1 vez por CPF (vitalício) e já foi utilizado.';
         final expiredUser = updated.copyWith(
           expiresAt: DateTime.now().subtract(const Duration(hours: 1)),
           plan: 'Assinatura Necessária',
@@ -1376,7 +1376,7 @@ class AuthController extends StateNotifier<AuthState> {
           return true;
         } else if (trial != null && trial['ok'] == false) {
           final trialMsg = trial['message'] as String? ??
-              'Período de teste já utilizado neste CPF ou aparelho nos últimos 12 meses.';
+              'O período de teste gratuito é concedido apenas 1 vez por CPF (vitalício) e já foi utilizado.';
           state = state.copyWith(
             user: updated,
             errorMessage: trialMsg,

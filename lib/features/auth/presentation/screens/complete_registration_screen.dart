@@ -4,6 +4,7 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/cpf_validator.dart';
 import '../controllers/auth_controller.dart';
 import 'legal_document_screen.dart';
+import 'subscription_renewal_screen.dart';
 
 /// Tela obrigatória de onboarding/KYC para contas Google ou cadastros
 /// sem CPF. Impede o acesso ao app e a ativação de Trial até que um CPF
@@ -65,6 +66,39 @@ class _CompleteRegistrationScreenState
     if (!success) {
       final err = ref.read(authControllerProvider).errorMessage ??
           'Não foi possível ativar o período de teste com este CPF.';
+
+      final isTrialUsed = err.toLowerCase().contains('já foi utilizado') ||
+          err.toLowerCase().contains('já utilizado');
+
+      if (isTrialUsed) {
+        await showDialog(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.workspace_premium, color: Color(0xFF2563EB)),
+                SizedBox(width: 8),
+                Text('Teste Já Utilizado', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            content: Text(
+              '$err\n\nPara continuar utilizando o L.I.F.O sem limites, escolha seu plano de assinatura.',
+              style: const TextStyle(fontSize: 14),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Ver Planos e Assinar', style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF2563EB))),
+              ),
+            ],
+          ),
+        );
+        if (mounted) {
+          SubscriptionRenewalScreen.openLocked(context);
+        }
+        return;
+      }
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(err),
@@ -393,7 +427,7 @@ class _CompleteRegistrationScreenState
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
-                                    'Auditoria única por CPF e Hardware. Cada entregador tem direito a 1 período de teste a cada 12 meses.',
+                                    'Auditoria única por CPF e Hardware. O período de teste de 30 dias é concedido apenas 1 única vez por CPF (vitalício).',
                                     style: TextStyle(
                                       fontSize: 11,
                                       color: subColor,
@@ -502,6 +536,32 @@ class _CompleteRegistrationScreenState
                                   ),
                                 ],
                               ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+
+                    // Botão direto para Assinatura (para quem já usou o teste ou quer assinar)
+                    OutlinedButton.icon(
+                      onPressed: authState.isLoading
+                          ? null
+                          : () => SubscriptionRenewalScreen.open(context),
+                      icon: const Icon(Icons.workspace_premium_outlined, size: 18, color: Color(0xFF2563EB)),
+                      label: const Text(
+                        'Já utilizou o teste grátis? Assinar L.I.F.O PRO',
+                        style: TextStyle(
+                          color: Color(0xFF2563EB),
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
+                      ),
+                      style: OutlinedButton.styleFrom(
+                        side: BorderSide(
+                          color: isDark ? const Color(0xFF334155) : const Color(0xFFCBD5E1),
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
                     ),
                     const SizedBox(height: 12),
