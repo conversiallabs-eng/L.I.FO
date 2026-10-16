@@ -8,7 +8,7 @@
 <meta property="og:title" content="L.I.F.O. — Logística inteligente. Do baú à última entrega.">
 <meta property="og:url" content="https://lifo.com.br/">
 <style>
-:root{--blue:#0066FF;--ink:#0F172A;--mut:#475569;--bg:#F6F8FF;--line:#E2E8F0}
+:root{--blue:#0066FF;--blue-glow:#3B82F6;--ink:#0F172A;--mut:#475569;--bg:#F6F8FF;--line:#E2E8F0}
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:Segoe UI,Arial,sans-serif;color:var(--ink);line-height:1.6}
 .wrap{max-width:1080px;margin:0 auto;padding:0 20px}
@@ -28,6 +28,64 @@ h2{font-size:clamp(24px,4vw,36px);margin:8px 0}.sub{color:var(--mut);max-width:6
 .g4{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
 .card{border:1px solid var(--line);border-radius:14px;padding:22px;background:#fff}
 .card b.num{color:var(--blue);font-size:13px}.card h3{margin:6px 0;font-size:18px}.card p{color:var(--mut);font-size:15px}
+
+/* ── App Screen Vector Mockups ── */
+.app-screens-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:32px;margin-top:36px;align-items:start}
+.screen-card{text-align:center}
+.screen-card h3{font-size:18px;color:#fff;margin:18px 0 6px}
+.screen-card p{color:#94A3B8;font-size:14px;line-height:1.4}
+.phone-frame{width:270px;height:530px;background:#000;border:3px solid #334155;border-radius:36px;margin:0 auto;position:relative;box-shadow:0 20px 40px rgba(0,0,0,0.6),0 0 0 1px rgba(255,255,255,0.1);overflow:hidden;text-align:left}
+.phone-notch{width:90px;height:18px;background:#000;border-bottom-left-radius:12px;border-bottom-right-radius:12px;position:absolute;top:0;left:50%;transform:translateX(-50%);z-index:20}
+.phone-screen{width:100%;height:100%;background:#0F172A;color:#fff;font-family:Segoe UI,sans-serif;font-size:11px;display:flex;flex-direction:column;position:relative;overflow:hidden}
+.app-status-bar{height:28px;padding:8px 16px 0;display:flex;justify-content:space-between;font-size:10px;color:#94A3B8;font-weight:600;z-index:10}
+
+/* Map Screen */
+.screen-map{background:#020617}
+.app-header{display:flex;gap:8px;padding:6px 12px;z-index:10}
+.app-icon-btn{width:28px;height:28px;background:#1E293B;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;position:relative}
+.badge-dot{width:6px;height:6px;background:#EF4444;border-radius:50%;position:absolute;top:2px;right:2px}
+.app-search-bar{flex:1;background:#1E293B;border:1px solid #334155;border-radius:8px;padding:6px 10px;font-size:11px;color:#CBD5E1;display:flex;align-items:center}
+.map-canvas{flex:1;position:relative;background:radial-gradient(circle at 50% 50%, #0F172A 0%, #020617 100%)}
+.app-sheet{background:#0F172A;border-top:1.5px solid #3B82F6;border-radius:18px 18px 0 0;padding:12px;margin-top:-20px;z-index:10;box-shadow:0 -10px 25px rgba(0,0,0,0.8)}
+.sheet-handle{width:32px;height:3px;background:#334155;border-radius:2px;margin:0 auto 8px}
+.sheet-title{font-size:12px;font-weight:800;color:#fff;display:flex;justify-content:space-between;align-items:center}
+.pill-bipado{background:rgba(37,99,235,0.2);color:#60A5FA;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:800}
+.sheet-address{color:#94A3B8;font-size:10.5px;margin:3px 0 8px}
+.sheet-bay-badge{background:rgba(0,230,118,0.15);border:1.5px solid #00E676;border-radius:6px;padding:5px 8px;display:flex;align-items:center;gap:6px;font-size:10px;color:#00E676;font-weight:800}
+.bay-dot{width:6px;height:6px;background:#00E676;border-radius:50%}
+.check-tag{margin-left:auto;background:#00E676;color:#000;font-size:8px;padding:1px 4px;border-radius:3px;font-weight:900}
+.nav-btn{width:100%;background:#2563EB;color:#fff;border:none;border-radius:8px;padding:8px;font-weight:800;font-size:11px;margin-top:8px;cursor:pointer}
+
+/* Bay Floorplan Screen */
+.screen-bay{background:#0F172A;padding:0 12px 12px}
+.bay-screen-title{font-size:13px;font-weight:800;text-align:center;margin:4px 0 8px}
+.cab-indicator{background:#1E293B;border-radius:8px;padding:6px;text-align:center;font-size:10px;font-weight:800;color:#60A5FA;letter-spacing:1px;margin-bottom:8px}
+.bay-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.bay-slot{background:#1E293B;border:1px solid #334155;border-radius:10px;padding:8px;height:72px;display:flex;flex-direction:column;justify-content:space-between}
+.bay-slot.active{border:1.5px solid #00E676;background:rgba(0,230,118,0.08)}
+.slot-head{font-size:10.5px;font-weight:800;display:flex;align-items:center;gap:4px}
+.dot{width:6px;height:6px;border-radius:50%}
+.dot.red{background:#FF1744}.dot.orange{background:#FF9100}.dot.purple{background:#7C4DFF}.dot.blue{background:#2979FF}.dot.cyan{background:#00E5FF}.dot.green{background:#00E676}
+.slot-body{font-size:9.5px;color:#CBD5E1;font-weight:700}.slot-body small{color:#94A3B8;font-weight:400}
+.bay-btn-row{display:flex;gap:6px;margin-top:8px}
+.bay-btn{flex:1;background:transparent;border:1px solid #334155;border-radius:8px;padding:6px;text-align:center;font-size:10px;font-weight:700;color:#94A3B8}
+.bay-btn.disabled{opacity:0.4}
+
+/* Scanner Screen */
+.screen-scanner{background:#020617;padding:0 12px 12px}
+.scanner-header{font-size:13px;font-weight:800;text-align:center;margin:4px 0 10px}
+.camera-viewfinder{height:180px;background:#090D16;border-radius:16px;border:1px stroke #1E293B;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.viewfinder-frame{width:160px;height:100px;border:2px dashed #0066FF;border-radius:12px;position:relative}
+.laser-beam{width:100%;height:2px;background:#FF1744;box-shadow:0 0 10px #FF1744;position:absolute;top:40%;animation:scan 2s infinite ease-in-out}
+@keyframes scan{0%{top:20%}50%{top:80%}100%{top:20%}}
+.scanner-barcode{color:#334155;font-size:18px;font-family:monospace;letter-spacing:2px;user-select:none}
+.scan-feedback{margin-top:12px;background:rgba(37,99,235,0.2);border:1px solid #2563EB;border-radius:10px;padding:8px;text-align:center}
+.feedback-badge{color:#60A5FA;font-weight:800;font-size:11px}
+.feedback-sub{color:#94A3B8;font-size:9.5px;margin-top:2px}
+.scan-history{margin-top:10px;display:flex;flex-direction:column;gap:4px}
+.history-item{background:#1E293B;border-radius:6px;padding:6px 10px;display:flex;justify-content:space-between;font-size:10px;color:#CBD5E1}
+.history-item b{color:#00E676}
+
 .stack{max-width:420px;margin:28px auto 0;border:1px solid var(--line);border-radius:14px;overflow:hidden}
 .slot{padding:12px 16px;border-top:1px solid var(--line);display:flex;justify-content:space-between;font-weight:700}
 .slot small{color:var(--mut);font-weight:400}.slot.first{background:var(--blue);color:#fff;border-top:0}.slot.first small{color:#DCE7FF}
@@ -46,7 +104,7 @@ input,textarea{padding:12px;border-radius:10px;border:1px solid var(--line);font
 <header><nav>
 <div class="logo">L.I.F.O<span>.</span></div>
 <div class="links">
-<a href="#como">Como funciona</a><a href="#recursos">Recursos</a><a href="#planos">Planos</a><a href="#faq">FAQ</a>
+<a href="#telas">O App</a><a href="#como">Como funciona</a><a href="#recursos">Recursos</a><a href="#planos">Planos</a><a href="#faq">FAQ</a>
 <a class="btn" href="lifo.apk">Baixar o app</a>
 </div></nav></header>
 <div class="hero"><div class="wrap">
@@ -56,6 +114,134 @@ input,textarea{padding:12px;border-radius:10px;border:1px solid var(--line);font
 <a class="btn" href="lifo.apk">Baixar o app</a>
 <div class="badges"><span>30 dias grátis</span><span>· Só Pix, sem cartão</span><span>· Em breve na Play Store</span></div>
 </div></div>
+
+<!-- Showcase de Telas do App -->
+<section id="telas" style="background:#0F172A;color:#fff;padding:64px 0;overflow:hidden">
+<div class="wrap">
+<div class="kicker" style="color:#60A5FA">Conheça o L.I.F.O. em Ação</div>
+<h2 style="color:#fff">Interface desenhada para a rotina do entregador.</h2>
+<p class="sub" style="color:#94A3B8">Do mapa logístico à organização física do baú: veja como o app guia cada passo do seu dia.</p>
+
+<div class="app-screens-grid">
+  <!-- Screen 1: Mapa e Navegação -->
+  <div class="screen-card">
+    <div class="phone-frame">
+      <div class="phone-notch"></div>
+      <div class="phone-screen screen-map">
+        <div class="app-status-bar"><span>20:30</span><span>5G ⚡ 100%</span></div>
+        <div class="app-header">
+          <div class="app-icon-btn">☰<span class="badge-dot"></span></div>
+          <div class="app-search-bar">🔍 Rua Augusta, 100...</div>
+        </div>
+        <!-- Vector Map -->
+        <div class="map-canvas">
+          <svg width="100%" height="100%" viewBox="0 0 280 220">
+            <path d="M-10,120 Q80,110 140,160 T290,170" stroke="#1E293B" stroke-width="18" fill="none"/>
+            <path d="M120,-10 L140,270" stroke="#1E293B" stroke-width="14" fill="none"/>
+            <path d="M30,120 L90,115 L140,160 L210,165" stroke="#0066FF" stroke-width="6" stroke-linecap="round" fill="none"/>
+            <circle cx="30" cy="120" r="11" fill="#16A34A" />
+            <text x="30" y="124" fill="#fff" font-size="10" font-weight="bold" text-anchor="middle">✓</text>
+            <circle cx="140" cy="160" r="13" fill="#0066FF" stroke="#fff" stroke-width="2"/>
+            <text x="140" y="164" fill="#fff" font-size="11" font-weight="bold" text-anchor="middle">1</text>
+            <circle cx="210" cy="165" r="11" fill="#3B82F6" opacity="0.8"/>
+            <text x="210" y="169" fill="#fff" font-size="10" font-weight="bold" text-anchor="middle">2</text>
+          </svg>
+        </div>
+        <!-- Bottom Sheet -->
+        <div class="app-sheet">
+          <div class="sheet-handle"></div>
+          <div class="sheet-title"><span>Parada #1 • DHKBXD</span><span class="pill-bipado">2/2 BIPADOS</span></div>
+          <div class="sheet-address">R. Tom Jobim, 31 — Centro</div>
+          <div class="sheet-bay-badge">
+            <span class="bay-dot"></span>
+            <span>BAÚ: PORTA TRASEIRA</span>
+            <span class="check-tag">✓ BIPADO</span>
+          </div>
+          <button class="nav-btn">▲ Continuar 1/82</button>
+        </div>
+      </div>
+    </div>
+    <h3>1. Navegação & Rota LIFO</h3>
+    <p>Acompanhe o caminho no mapa e saiba exatamente qual pacote pegar na próxima parada.</p>
+  </div>
+
+  <!-- Screen 2: Planta do Baú -->
+  <div class="screen-card">
+    <div class="phone-frame">
+      <div class="phone-notch"></div>
+      <div class="phone-screen screen-bay">
+        <div class="app-status-bar"><span>20:30</span><span>5G ⚡ 100%</span></div>
+        <div class="bay-screen-title">Compartimento de Carga LIFO</div>
+        <div class="cab-indicator">🚗 FRENTE DO VEÍCULO</div>
+
+        <div class="bay-grid">
+          <div class="bay-slot">
+            <div class="slot-head"><span class="dot red"></span> Fundo Esquerdo</div>
+            <div class="slot-body">1 parada • 1 vol<br><small>Descarregar #6</small></div>
+          </div>
+          <div class="bay-slot">
+            <div class="slot-head"><span class="dot orange"></span> Fundo Direito</div>
+            <div class="slot-body"><small>⊕ Toque p/ bipar</small></div>
+          </div>
+          <div class="bay-slot">
+            <div class="slot-head"><span class="dot purple"></span> Meio Esquerdo</div>
+            <div class="slot-body"><small>⊕ Toque p/ bipar</small></div>
+          </div>
+          <div class="bay-slot">
+            <div class="slot-head"><span class="dot blue"></span> Meio Direito</div>
+            <div class="slot-body"><small>⊕ Toque p/ bipar</small></div>
+          </div>
+          <div class="bay-slot">
+            <div class="slot-head"><span class="dot cyan"></span> Porta Lateral</div>
+            <div class="slot-body"><small>⊕ Toque p/ bipar</small></div>
+          </div>
+          <div class="bay-slot active">
+            <div class="slot-head"><span class="dot green"></span> Porta Traseira</div>
+            <div class="slot-body">1 parada • 2 vol<br><small>Descarregar #1</small></div>
+          </div>
+        </div>
+
+        <div class="bay-btn-row">
+          <div class="bay-btn">+ Adicionar</div>
+          <div class="bay-btn disabled">− Excluir</div>
+        </div>
+      </div>
+    </div>
+    <h3>2. Baú Interativo em 6 Zonas</h3>
+    <p>Veja a planta do seu veículo. A primeira entrega fica à mão na porta traseira.</p>
+  </div>
+
+  <!-- Screen 3: Scanner de Carga -->
+  <div class="screen-card">
+    <div class="phone-frame">
+      <div class="phone-notch"></div>
+      <div class="phone-screen screen-scanner">
+        <div class="app-status-bar"><span>20:30</span><span>5G ⚡ 100%</span></div>
+        <div class="scanner-header">Leitor de Carga LIFO</div>
+
+        <div class="camera-viewfinder">
+          <div class="laser-beam"></div>
+          <div class="viewfinder-frame"></div>
+          <div class="scanner-barcode">|||| | ||||| ||| ||||</div>
+        </div>
+
+        <div class="scan-feedback">
+          <div class="feedback-badge">✓ VOL-0042 CONFIRMADO</div>
+          <div class="feedback-sub">Parada #1 • Porta Traseira</div>
+        </div>
+
+        <div class="scan-history">
+          <div class="history-item"><span>VOL-0041</span><b>Parada #1 ✓</b></div>
+          <div class="history-item"><span>VOL-0042</span><b>Parada #1 ✓</b></div>
+        </div>
+      </div>
+    </div>
+    <h3>3. Leitura Ultra-Rápida</h3>
+    <p>Bipa com a câmera do celular, confira os pacotes e evite entregas trocadas no caminho.</p>
+  </div>
+</div>
+</div></section>
+
 <section><div class="wrap">
 <div class="kicker">Seu baú, na ordem certa LIFO</div>
 <h2>A primeira a sair fica por último no baú. O app mostra onde pôr cada caixa.</h2>
