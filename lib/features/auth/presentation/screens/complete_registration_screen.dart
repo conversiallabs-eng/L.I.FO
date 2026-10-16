@@ -4,6 +4,8 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/cpf_validator.dart';
 import '../controllers/auth_controller.dart';
 import 'legal_document_screen.dart';
+import '../../../dashboard/presentation/screens/home_dashboard_screen.dart';
+import 'login_screen.dart';
 import 'subscription_renewal_screen.dart';
 
 /// Tela obrigatória de onboarding/KYC para contas Google ou cadastros
@@ -34,6 +36,26 @@ class _CompleteRegistrationScreenState
   ];
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final auth = ref.read(authControllerProvider);
+      final cleanCpf = (auth.user.cpf ?? '').replaceAll(RegExp(r'\D'), '');
+      final hasValidCpf = cleanCpf.length == 11 && CpfValidator.isValid(cleanCpf);
+      if (auth.user.isLoggedIn &&
+          hasValidCpf &&
+          !auth.user.plan.toLowerCase().contains('pendente') &&
+          auth.user.expiresAt.isAfter(DateTime.now())) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const HomeDashboardScreen()),
+          (route) => false,
+        );
+      }
+    });
+  }
+
+  @override
   void dispose() {
     _cpfCtrl.dispose();
     _phoneCtrl.dispose();
@@ -62,6 +84,21 @@ class _CompleteRegistrationScreenState
         );
 
     if (!mounted) return;
+
+    if (success) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Teste de 30 dias liberado com sucesso! Bom trabalho.'),
+          backgroundColor: Color(0xFF2563EB),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const HomeDashboardScreen()),
+        (route) => false,
+      );
+      return;
+    }
 
     if (!success) {
       final err = ref.read(authControllerProvider).errorMessage ??
@@ -574,6 +611,11 @@ class _CompleteRegistrationScreenState
                               await ref
                                   .read(authControllerProvider.notifier)
                                   .logout();
+                              if (!context.mounted) return;
+                              Navigator.of(context).pushAndRemoveUntil(
+                                MaterialPageRoute(builder: (_) => const LoginScreen()),
+                                (route) => false,
+                              );
                             },
                       child: Text(
                         'Entrou na conta errada? Sair e trocar de conta',

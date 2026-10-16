@@ -32,11 +32,11 @@ CREATE POLICY "Authenticated can read app_config"
   TO authenticated
   USING (true);
 
--- 2. Registrar versão publicada (v1.0.4 build 13) e Token Mapbox para Satélite
+-- 2. Registrar versão publicada (v1.0.4 build 14) e Token Mapbox para Satélite
 INSERT INTO public.app_config (key, value, updated_at)
 VALUES
   ('latest_version', '1.0.4',                                        now()),
-  ('latest_build',   '13',                                           now()),
+  ('latest_build',   '14',                                           now()),
   ('apk_url',        'https://lifo.com.br/lifo.apk',                  now()),
   ('release_notes',  'Melhorias de desempenho, estabilidade na navegação e maior economia de bateria.', now()),
   ('mapbox_token',   convert_from(decode('cGsuZXlKMUlqb2libUZ1YjI1aGJtODJNVE1pTENKaElqb2lZMjEyT0dSM2EyazVNSE50YVRKNWJ6ZDVlVEprYTNNNFlpSjkuSVBNdWQwLVJiSkpDWjdQQVhCaUNQdw==', 'base64'), 'UTF-8'), now())
