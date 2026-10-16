@@ -11,6 +11,7 @@ import 'core/services/map_config_service.dart';
 import 'features/dashboard/presentation/screens/home_dashboard_screen.dart';
 import 'features/auth/presentation/controllers/auth_controller.dart';
 import 'features/auth/presentation/screens/login_screen.dart';
+import 'features/auth/presentation/screens/complete_registration_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -97,9 +98,18 @@ class LifoApp extends ConsumerWidget {
     final expired =
         user.isLoggedIn && !user.expiresAt.isAfter(DateTime.now());
     final blocked = user.isLoggedIn && expired && !authState.graceOfferPending;
+
+    // Blindagem de Rodízio: Se estiver logado mas sem CPF (ex: login novo Google),
+    // é obrigado a validar CPF e hardware antes de liberar as rotas.
+    final cleanCpf = (user.cpf ?? '').replaceAll(RegExp(r'\D'), '');
+    final needsCpf = user.isLoggedIn && cleanCpf.length != 11;
+
     if (authState.isBooting) {
       home = const _BootSplash();
       switchKey = 'boot';
+    } else if (needsCpf) {
+      home = const CompleteRegistrationScreen();
+      switchKey = 'complete_registration';
     } else if (user.isLoggedIn && !blocked) {
       home = const HomeDashboardScreen();
       switchKey = 'home';

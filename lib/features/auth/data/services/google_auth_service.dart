@@ -81,8 +81,8 @@ class GoogleAuthService {
             name: googleAccount.displayName ??
                 googleAccount.email.split('@').first,
             email: googleAccount.email,
-            plan: 'Standard (Trial 30 Dias)',
-            expiresAt: DateTime.now().add(const Duration(days: 30)),
+            plan: 'Pendente de Ativação',
+            expiresAt: DateTime.now().subtract(const Duration(minutes: 1)),
             isLoggedIn: true,
             isGoogleAuth: true,
             avatarUrl: googleAccount.photoUrl,

@@ -218,14 +218,19 @@ class SupabaseService {
   // (fn_start_trial, fn_trust_grace_*, fn_apply_payment, confirm-renewal).
   // O trigger trg_guard_money barra qualquer escrita direta dessas colunas.
 
-  /// Trial único por usuário (server-side; sem trial infinito).
-  /// Retorna o mapa da função ({ok, trial, expires_at}) ou null sem rede.
-  Future<Map<String, dynamic>?> startTrial() async {
+  /// Trial único por usuário e hardware (server-side; sem trial infinito).
+  /// Recebe o [deviceFingerprint] para auditoria de 12 meses contra rodízio.
+  /// Retorna o mapa da função ({ok, trial, expires_at, reason, message}) ou null sem rede.
+  Future<Map<String, dynamic>?> startTrial({String? deviceFingerprint}) async {
     if (!_isInitialized || currentUser == null) return null;
     try {
-      final res = await _client
-          .rpc('fn_start_trial')
-          .timeout(const Duration(seconds: 10));
+      final res = await _client.rpc(
+        'fn_start_trial',
+        params: {
+          if (deviceFingerprint != null && deviceFingerprint.isNotEmpty)
+            'p_device_fingerprint': deviceFingerprint,
+        },
+      ).timeout(const Duration(seconds: 10));
       return (res as Map?)?.map((k, v) => MapEntry(k.toString(), v));
     } catch (_) {
       return null;

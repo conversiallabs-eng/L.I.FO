@@ -8,6 +8,7 @@ import '../../../../core/network/net_guard.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/network/supabase_service.dart';
 import '../../../../core/security/license_guard.dart';
+import '../../../../core/services/device_security_service.dart';
 import '../../data/services/google_auth_service.dart';
 import '../../domain/models/user_profile.dart';
 
@@ -807,6 +808,8 @@ class AuthController extends StateNotifier<AuthState> {
 
       final userId = supaUser.id;
 
+      final cleanCpf = (cpf ?? '').replaceAll(RegExp(r'\D'), '');
+
       var newUser = UserProfile(
         id: userId,
         name: name.trim(),
@@ -816,19 +819,47 @@ class AuthController extends StateNotifier<AuthState> {
         isLoggedIn: true,
         isGoogleAuth: false,
         vehicleType: vehicleType ?? 'Van de Carga',
-        cpf: cpf,
+        cpf: cleanCpf,
         rg: rg,
         phone: phone,
         billingAddress: billingAddress,
         billingCep: billingCep,
       );
 
-      await _saveProfile(newUser);
+      final remoteErr = await _saveProfile(newUser);
+      if (remoteErr != null) {
+        String msg = remoteErr;
+        if (remoteErr.contains('uq_user_profiles_clean_cpf') ||
+            remoteErr.contains('duplicate key') ||
+            remoteErr.contains('23505')) {
+          msg = 'Este CPF já está cadastrado em outra conta L.I.F.O.';
+        }
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage: msg,
+        );
+        return false;
+      }
 
-      // Trial único via servidor (sem trial infinito). Vale a expiração
-      // oficial devolvida pela função.
+      // Trial único via servidor com validação de Hardware (anti-rodízio)
       try {
-        final trial = await SupabaseService.instance.startTrial();
+        final fp = await DeviceSecurityService.instance.getDeviceFingerprint();
+        final trial = await SupabaseService.instance.startTrial(deviceFingerprint: fp);
+        if (trial != null && trial['ok'] == false) {
+          final msg = trial['message'] as String? ??
+              'Período de teste já utilizado neste CPF ou aparelho nos últimos 12 meses.';
+          final expiredUser = newUser.copyWith(
+            expiresAt: DateTime.now().subtract(const Duration(hours: 1)),
+            plan: 'Assinatura Necessária',
+          );
+          await _saveProfile(expiredUser);
+          state = state.copyWith(
+            user: expiredUser,
+            isLoading: false,
+            errorMessage: msg,
+          );
+          return false;
+        }
         final exp = DateTime.tryParse(trial?['expires_at'] as String? ?? '');
         if (trial?['ok'] == true && exp != null) {
           newUser = newUser.copyWith(expiresAt: exp);
@@ -851,6 +882,103 @@ class AuthController extends StateNotifier<AuthState> {
       state = state.copyWith(
         isLoading: false,
         errorMessage: 'Erro ao criar conta. Verifique sua conexão e tente novamente.',
+      );
+      return false;
+    }
+  }
+
+  // ─── COMPLETAR KYC & ATIVAR TRIAL (GOOGLE ONBOARDING) ─────────────────────
+
+  /// Completa o KYC obrigatório (ex: pós-Google) e ativa o Trial blindado.
+  Future<bool> completeKycAndActivateTrial({
+    required String cpf,
+    required String phone,
+    String? vehicleType,
+    String? rg,
+    String? billingAddress,
+    String? billingCep,
+  }) async {
+    state = state.copyWith(isLoading: true, errorMessage: null);
+    HapticFeedback.lightImpact();
+
+    try {
+      final cleanCpf = cpf.replaceAll(RegExp(r'\D'), '');
+      if (cleanCpf.length != 11) {
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage: 'CPF inválido. Certifique-se de digitar 11 números.',
+        );
+        return false;
+      }
+
+      final updated = state.user.copyWith(
+        cpf: cleanCpf,
+        phone: phone.trim(),
+        vehicleType: vehicleType ?? state.user.vehicleType,
+        rg: rg ?? state.user.rg,
+        billingAddress: billingAddress ?? state.user.billingAddress,
+        billingCep: billingCep ?? state.user.billingCep,
+      );
+
+      // 1. Salva no Supabase (se o CPF já pertencer a outra conta, o uq_user_profiles_clean_cpf recusa)
+      final remoteError = await _saveProfile(updated);
+      if (remoteError != null) {
+        String msg = remoteError;
+        if (remoteError.contains('uq_user_profiles_clean_cpf') ||
+            remoteError.contains('duplicate key') ||
+            remoteError.contains('23505')) {
+          msg = 'Este CPF já está cadastrado em outra conta L.I.F.O.';
+        }
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage: msg,
+        );
+        return false;
+      }
+
+      // 2. Coleta hardware fingerprint
+      final fp = await DeviceSecurityService.instance.getDeviceFingerprint();
+
+      // 3. Tenta ativar os 30 dias de trial
+      final trial = await SupabaseService.instance.startTrial(deviceFingerprint: fp);
+
+      if (trial == null || trial['ok'] != true) {
+        final reason = trial?['message'] as String? ??
+            'Período de teste já utilizado neste aparelho ou CPF nos últimos 12 meses.';
+        final expiredUser = updated.copyWith(
+          expiresAt: DateTime.now().subtract(const Duration(hours: 1)),
+          plan: 'Assinatura Necessária',
+        );
+        await _saveProfile(expiredUser);
+        state = state.copyWith(
+          user: expiredUser,
+          isLoading: false,
+          errorMessage: reason,
+        );
+        return false;
+      }
+
+      // 4. Trial concedido com sucesso
+      final exp = DateTime.tryParse(trial['expires_at'] as String? ?? '') ??
+          DateTime.now().add(const Duration(days: 30));
+      final approvedUser = updated.copyWith(
+        plan: 'Standard (Trial 30 Dias)',
+        expiresAt: exp,
+      );
+      await _saveProfile(approvedUser);
+      await _issueOfflineToken(approvedUser);
+
+      state = state.copyWith(
+        user: approvedUser,
+        isLoading: false,
+        successMessage: 'Cadastro validado! 30 dias de teste liberados.',
+      );
+      HapticFeedback.mediumImpact();
+      return true;
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: 'Falha ao ativar o teste. Verifique sua conexão.',
       );
       return false;
     }
@@ -948,19 +1076,25 @@ class AuthController extends StateNotifier<AuthState> {
     final result = await GoogleAuthService.instance.signIn();
 
     if (result.success && result.profile != null) {
-      await _saveProfile(result.profile!);
-      // Trial único via servidor (idempotente: pago existente não é tocado).
+      final profile = result.profile!;
+      await _saveProfile(profile);
+
+      // Se já possui CPF cadastrado (ex: usuário antigo), tenta reconciliar trial
+      final cleanCpf = (profile.cpf ?? '').replaceAll(RegExp(r'\D'), '');
+      if (cleanCpf.length == 11) {
+        try {
+          final fp = await DeviceSecurityService.instance.getDeviceFingerprint();
+          await SupabaseService.instance.startTrial(deviceFingerprint: fp);
+        } catch (_) {}
+      }
+      await _issueOfflineToken(profile);
       try {
-        await SupabaseService.instance.startTrial();
-      } catch (_) {}
-      await _issueOfflineToken(result.profile!);
-      try {
-        if (result.profile!.plan.toLowerCase().contains('ativo')) {
-          await _markPaidOnce(result.profile!.id);
+        if (profile.plan.toLowerCase().contains('ativo')) {
+          await _markPaidOnce(profile.id);
         }
       } catch (_) {}
       state = state.copyWith(
-        user: result.profile!,
+        user: profile,
         isLoading: false,
         isOffline: false,
         successMessage: 'Login com Google realizado com sucesso!',

@@ -112,6 +112,17 @@ class _CreateAccountScreenState extends ConsumerState<CreateAccountScreen> {
         ),
       );
       Navigator.of(context).pop(true);
+    } else if (mounted) {
+      final error = ref.read(authControllerProvider).errorMessage;
+      if (error != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(error),
+            backgroundColor: const Color(0xFFDC2626),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
     }
   }
 

@@ -23,13 +23,13 @@ CREATE POLICY "Anon can read release keys"
   TO anon
   USING (key IN ('latest_version', 'latest_build', 'apk_url', 'release_notes'));
 
--- 2. Registrar versão publicada (v1.0.2 build 3)
+-- 2. Registrar versão publicada (v1.0.3 build 4)
 INSERT INTO public.app_config (key, value, updated_at)
 VALUES
-  ('latest_version', '1.0.2',                                        now()),
-  ('latest_build',   '3',                                            now()),
+  ('latest_version', '1.0.3',                                        now()),
+  ('latest_build',   '4',                                            now()),
   ('apk_url',        'https://lifo.com.br/lifo.apk',                  now()),
-  ('release_notes',  'Melhorias de desempenho e correções de estabilidade.', now())
+  ('release_notes',  'Blindagem de segurança anti-rodízio de contas, validação única de hardware e melhorias de estabilidade.', now())
 ON CONFLICT (key) DO UPDATE
   SET value = EXCLUDED.value, updated_at = now();
 
