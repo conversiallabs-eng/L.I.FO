@@ -3,9 +3,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:vector_map_tiles/vector_map_tiles.dart';
 import '../../../../core/map/map_tiles.dart';
 import '../../../../core/map/tile_cache.dart';
 import '../../../../core/network/connectivity_service.dart';
+import '../../../../core/services/vector_style_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/route_simplify.dart';
 
@@ -201,6 +203,29 @@ class _LogisticsMapCanvasState extends State<LogisticsMapCanvas> {
   bool? _snapNavigating;
   Widget? _cachedMarkerLayer;
   List<Widget> _cachedLegLayers = const [];
+
+  @override
+  void initState() {
+    super.initState();
+    _initVectorMap();
+  }
+
+  void _initVectorMap() async {
+    try {
+      await VectorStyleService.instance.loadStyle(isDark: widget.isDark);
+      if (mounted) setState(() {});
+    } catch (e) {
+      debugPrint('VectorStyleService canvas init error: $e');
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant LogisticsMapCanvas oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isDark != widget.isDark) {
+      _initVectorMap();
+    }
+  }
 
   static bool _markersEqual(
       List<MapCanvasMarker>? a, List<MapCanvasMarker> b) {
@@ -470,8 +495,20 @@ class _LogisticsMapCanvasState extends State<LogisticsMapCanvas> {
                         'Tile falhou z${tile.coordinates.z} (${tile.coordinates.x},${tile.coordinates.y}): $error');
                   },
                 )
-              else if (isDark) ...[
-                // Estilo noturno estilo Uber (CARTO Dark Matter nativo com fallback OSM).
+              else if (VectorStyleService.instance.cachedStyle(isDark: isDark) != null) ...[
+                // MAPA VETORIAL NATIVO OPENFREEMAP (LIBERTY / DARK)
+                // Nomes de ruas em negrito, pretos (#000 com halo branco), nítidos em qualquer zoom!
+                VectorTileLayer(
+                  key: ValueKey('vector_tile_${isDark ? "dark" : "light"}'),
+                  theme: VectorStyleService.instance.cachedStyle(isDark: isDark)!.theme,
+                  sprites: VectorStyleService.instance.cachedStyle(isDark: isDark)!.sprites,
+                  tileProviders: VectorStyleService.instance.cachedStyle(isDark: isDark)!.providers,
+                  layerMode: VectorTileLayerMode.vector,
+                  fileCacheTtl: const Duration(days: 36500),
+                  fileCacheMaximumSizeInBytes: 500 * 1024 * 1024,
+                ),
+              ] else if (isDark) ...[
+                // Fallback raster noturno enquanto carrega o vetor
                 TileLayer(
                   urlTemplate: MapTiles.roadsDark,
                   fallbackUrl: MapTiles.fallbackRoadsDark,
@@ -480,8 +517,6 @@ class _LogisticsMapCanvasState extends State<LogisticsMapCanvas> {
                   retinaMode: false,
                   maxZoom: 18,
                   maxNativeZoom: roadsNativeZoom,
-                  // Dark puro é preto demais na cabine: levanta os pretos
-                  // (~+20, azulado) via GPU. Só nas vias noturnas.
                   tileBuilder: (context, tileWidget, tile) => ColorFiltered(
                     colorFilter: _darkLiftFilter,
                     child: tileWidget,
@@ -489,13 +524,9 @@ class _LogisticsMapCanvasState extends State<LogisticsMapCanvas> {
                   keepBuffer: 2,
                   panBuffer: 1,
                   tileDisplay: const TileDisplay.instantaneous(),
-                  errorTileCallback: (tile, error, stackTrace) {
-                    debugPrint(
-                        'Tile falhou z${tile.coordinates.z} (${tile.coordinates.x},${tile.coordinates.y}): $error');
-                  },
                 ),
               ] else ...[
-                // Vias no tema claro (CARTO Positron - estilo Uber com fallback OSM).
+                // Fallback raster claro enquanto carrega o vetor
                 TileLayer(
                   urlTemplate: MapTiles.roads,
                   fallbackUrl: MapTiles.fallbackRoads,
@@ -507,10 +538,6 @@ class _LogisticsMapCanvasState extends State<LogisticsMapCanvas> {
                   keepBuffer: 2,
                   panBuffer: 1,
                   tileDisplay: const TileDisplay.instantaneous(),
-                  errorTileCallback: (tile, error, stackTrace) {
-                    debugPrint(
-                        'Tile falhou z${tile.coordinates.z} (${tile.coordinates.x},${tile.coordinates.y}): $error');
-                  },
                 ),
               ],
 

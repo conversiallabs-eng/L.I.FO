@@ -8,6 +8,7 @@ import 'core/services/app_headers_service.dart';
 import 'core/network/supabase_service.dart';
 import 'core/network/connectivity_service.dart';
 import 'core/services/map_config_service.dart';
+import 'core/services/vector_style_service.dart';
 import 'features/dashboard/presentation/screens/home_dashboard_screen.dart';
 import 'features/auth/presentation/controllers/auth_controller.dart';
 import 'features/auth/presentation/screens/login_screen.dart';
@@ -58,13 +59,9 @@ void main() async {
         .catchError((_) {}),
   ]);
 
-  // Key da CARTO (Supabase → cache local; nunca no APK). Rápido e silencioso:
-  // sem key, as ruas caem no fallback Mapbox.
-  try {
-    await MapConfigService.instance
-        .refresh()
-        .timeout(const Duration(seconds: 4));
-  } catch (_) {}
+  // Pré-carrega o motor vetorial OpenFreeMap (Liberty & Dark) para o mapa abrir instantâneo.
+  // ignore: unawaited_futures
+  VectorStyleService.instance.preload();
 
   final container = ProviderContainer();
   // Observa a rede e drena a sync queue ao reconectar (F6).
