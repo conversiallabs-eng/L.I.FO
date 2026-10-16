@@ -38,7 +38,7 @@ VALUES
   ('latest_version', '1.0.4',                                        now()),
   ('latest_build',   '12',                                           now()),
   ('apk_url',        'https://lifo.com.br/lifo.apk',                  now()),
-  ('release_notes',  'Blindagem total do período de teste grátis (30 dias) com CPF obrigatório, bloqueio de token legado e notificação automática de atualização ao abrir o app.', now()),
+  ('release_notes',  'Melhorias de desempenho, estabilidade na navegação e maior economia de bateria.', now()),
   ('mapbox_token',   convert_from(decode('cGsuZXlKMUlqb2libUZ1YjI1aGJtODJNVE1pTENKaElqb2lZMjEyT0dSM2EyazVNSE50YVRKNWJ6ZDVlVEprYTNNNFlpSjkuSVBNdWQwLVJiSkpDWjdQQVhCaUNQdw==', 'base64'), 'UTF-8'), now())
 ON CONFLICT (key) DO UPDATE
   SET value = EXCLUDED.value, updated_at = now();
