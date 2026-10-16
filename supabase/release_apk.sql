@@ -1,5 +1,5 @@
 -- ============================================================================
--- L.I.F.O — PUBLICAR VERSÃO NOVA DO APK (v1.0.4+9) E ATIVAR SATÉLITE MAPBOX
+-- L.I.F.O — PUBLICAR VERSÃO NOVA DO APK (v1.0.4+10)
 -- ============================================================================
 --
 -- COMO USAR:
@@ -32,13 +32,13 @@ CREATE POLICY "Authenticated can read app_config"
   TO authenticated
   USING (true);
 
--- 2. Registrar versão publicada (v1.0.4 build 9) e Token Mapbox para Satélite
+-- 2. Registrar versão publicada (v1.0.4 build 10) e Token Mapbox para Satélite
 INSERT INTO public.app_config (key, value, updated_at)
 VALUES
   ('latest_version', '1.0.4',                                        now()),
-  ('latest_build',   '9',                                            now()),
+  ('latest_build',   '10',                                           now()),
   ('apk_url',        'https://lifo.com.br/lifo.apk',                  now()),
-  ('release_notes',  'Ativação do mapa de satélite Mapbox com fotos em alta definição e fallback ArcGIS aberto.', now()),
+  ('release_notes',  'Separação total entre ativação de teste grátis (30 dias) e checkout, correção de persistência de dados cadastrais e tutorial exclusivo na Home.', now()),
   ('mapbox_token',   convert_from(decode('cGsuZXlKMUlqb2libUZ1YjI1aGJtODJNVE1pTENKaElqb2lZMjEyT0dSM2EyazVNSE50YVRKNWJ6ZDVlVEprYTNNNFlpSjkuSVBNdWQwLVJiSkpDWjdQQVhCaUNQdw==', 'base64'), 'UTF-8'), now())
 ON CONFLICT (key) DO UPDATE
   SET value = EXCLUDED.value, updated_at = now();

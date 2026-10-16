@@ -173,15 +173,16 @@ class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
       _saving = false;
       if (ok) _editing = false;
     });
+    final successMsg = ref.read(authControllerProvider).successMessage;
     final err = ref.read(authControllerProvider).errorMessage;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          ok ? 'Dados atualizados com sucesso!' : (err ?? 'O servidor recusou os dados.'),
+          ok ? (successMsg ?? 'Dados atualizados com sucesso!') : (err ?? 'O servidor recusou os dados.'),
         ),
-        backgroundColor: ok ? const Color(0xFF2563EB) : const Color(0xFFDC2626),
+        backgroundColor: ok ? const Color(0xFF059669) : const Color(0xFFDC2626),
         behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: ok ? 3 : 6),
+        duration: Duration(seconds: ok ? 4 : 6),
       ),
     );
   }
@@ -321,31 +322,48 @@ class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 16),
-
-                  // Botão Renovar Assinatura
+                                // Botão Ativar Trial ou Renovar Assinatura
                   SizedBox(
                     width: double.infinity,
                     height: 42,
-                    child: OutlinedButton.icon(
-                      icon: const Icon(Icons.bolt, size: 20, color: Color(0xFF2563EB)),
-                      label: const Text(
-                        'Renovar Assinatura',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF2563EB),
-                        ),
-                      ),
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Color(0xFF2563EB), width: 1.4),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        backgroundColor: const Color(0xFF2563EB).withValues(alpha: 0.05),
-                      ),
-                      onPressed: () {
-                        SubscriptionRenewalScreen.open(context);
-                      },
-                    ),
+                    child: user.plan.toLowerCase().contains('pendente')
+                        ? ElevatedButton.icon(
+                            icon: const Icon(Icons.verified_user_outlined, size: 20, color: Colors.white),
+                            label: const Text(
+                              'Completar Dados e Liberar 30 Dias Grátis',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF2563EB),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            onPressed: () {
+                              _enterEdit(focusField: 'cpf');
+                            },
+                          )
+                        : OutlinedButton.icon(
+                            icon: const Icon(Icons.bolt, size: 20, color: Color(0xFF2563EB)),
+                            label: const Text(
+                              'Renovar Assinatura',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF2563EB),
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Color(0xFF2563EB), width: 1.4),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                              backgroundColor: const Color(0xFF2563EB).withValues(alpha: 0.05),
+                            ),
+                            onPressed: () {
+                              SubscriptionRenewalScreen.open(context);
+                            },
+                          ),
                   ),
                 ],
               ),

@@ -97,20 +97,22 @@ class LifoApp extends ConsumerWidget {
     String switchKey;
     final user = authState.user;
     // Expirado sem oferta de confiança não usa (com oferta entra travado
-    // no PIX pela Home). A validade é do servidor; o app só roteia.
-    final expired =
-        user.isLoggedIn && !user.expiresAt.isAfter(DateTime.now());
-    final blocked = user.isLoggedIn && expired && !authState.graceOfferPending;
-
-    // Blindagem de Rodízio: Se estiver logado mas sem CPF (ex: login novo Google),
-    // é obrigado a validar CPF e hardware antes de liberar as rotas.
+    // Separação de telas: Ativação de Teste Grátis vs Checkout
+    // Se o usuário está logado mas ainda não ativou o trial (sem CPF ou 'Pendente de Ativação'),
+    // ele vai para a tela de ativação de 30 dias grátis (CompleteRegistrationScreen),
+    // NUNCA para a tela de checkout (PIX).
     final cleanCpf = (user.cpf ?? '').replaceAll(RegExp(r'\D'), '');
-    final needsCpf = user.isLoggedIn && cleanCpf.length != 11;
+    final isPendingActivation = user.isLoggedIn &&
+        (cleanCpf.length != 11 || user.plan.toLowerCase().contains('pendente'));
+
+    final expired =
+        user.isLoggedIn && !isPendingActivation && !user.expiresAt.isAfter(DateTime.now());
+    final blocked = user.isLoggedIn && expired && !authState.graceOfferPending;
 
     if (authState.isBooting) {
       home = const _BootSplash();
       switchKey = 'boot';
-    } else if (needsCpf) {
+    } else if (isPendingActivation) {
       home = const CompleteRegistrationScreen();
       switchKey = 'complete_registration';
     } else if (user.isLoggedIn && !blocked) {

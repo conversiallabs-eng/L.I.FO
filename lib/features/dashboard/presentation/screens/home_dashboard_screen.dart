@@ -425,6 +425,8 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     if (_graceLockOpened || !mounted) return;
     final auth = ref.read(authControllerProvider);
     if (!auth.user.isLoggedIn) return;
+    // Se o usuário ainda está em fase de ativação de trial, NUNCA trava em checkout
+    if (auth.user.plan.toLowerCase().contains('pendente')) return;
     if (auth.user.expiresAt.isAfter(DateTime.now())) return;
     _graceLockOpened = true;
     Future.delayed(const Duration(milliseconds: 600), () {
@@ -462,6 +464,16 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
 
   Future<void> _startHomeCoach({bool force = false}) async {
     if (!mounted) return;
+    // O tutorial SÓ deve rodar se o usuário estiver de fato na HOME:
+    // sem modal/checkout por cima e com conta ativa.
+    final isCurrent = ModalRoute.of(context)?.isCurrent ?? false;
+    if (!isCurrent) return;
+
+    final auth = ref.read(authControllerProvider);
+    if (!auth.user.isLoggedIn) return;
+    if (auth.user.plan.toLowerCase().contains('pendente')) return;
+    if (!auth.user.expiresAt.isAfter(DateTime.now())) return;
+
     if (!force && await AppTutorial.isSeen(AppTutorial.homeSeenKey)) return;
     if (!mounted) return;
     // Estado vazio (1º login) tem outra tela: busca/scanner/⋯ nem existem.

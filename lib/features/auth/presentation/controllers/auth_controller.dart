@@ -1231,10 +1231,11 @@ class AuthController extends StateNotifier<AuthState> {
     String? billingCep,
     String? cityUf,
   }) async {
+    final cleanCpf = (cpf ?? state.user.cpf ?? '').replaceAll(RegExp(r'\D'), '');
     final updated = state.user.copyWith(
       name: name,
       email: email,
-      cpf: cpf,
+      cpf: cleanCpf.isNotEmpty ? cleanCpf : cpf,
       rg: rg,
       phone: phone,
       billingAddress: billingAddress,
@@ -1242,21 +1243,64 @@ class AuthController extends StateNotifier<AuthState> {
       cityUf: cityUf,
     );
     final remoteError = await _saveProfile(updated);
-    if (remoteError == null) {
+    if (remoteError != null) {
+      String msg = remoteError;
+      if (remoteError.contains('uq_user_profiles_clean_cpf') ||
+          remoteError.contains('duplicate key') ||
+          remoteError.contains('23505')) {
+        msg = 'Este CPF já está cadastrado em outra conta L.I.F.O.';
+      }
       state = state.copyWith(
         user: updated,
-        successMessage: 'Perfil atualizado no banco de dados!',
-        errorMessage: null,
+        errorMessage: 'Salvo no aparelho, mas o servidor recusou: $msg',
+        successMessage: null,
       );
-      return true;
+      return false;
     }
+
+    // Se o usuário está pendente de ativação ou expirado e forneceu CPF válido de 11 dígitos:
+    // ATIVA OS 30 DIAS DE TESTE GRÁTIS IMEDIATAMENTE!
+    final isPendingTrial = state.user.plan.toLowerCase().contains('pendente') ||
+        !state.user.expiresAt.isAfter(DateTime.now());
+
+    if (cleanCpf.length == 11 && isPendingTrial) {
+      try {
+        final fp = await DeviceSecurityService.instance.getDeviceFingerprint();
+        final trial = await SupabaseService.instance.startTrial(deviceFingerprint: fp);
+        if (trial != null && trial['ok'] == true) {
+          final exp = DateTime.tryParse(trial['expires_at'] as String? ?? '') ??
+              DateTime.now().add(const Duration(days: 30));
+          final approvedUser = updated.copyWith(
+            plan: 'Standard (Trial 30 Dias)',
+            expiresAt: exp,
+          );
+          await _saveProfile(approvedUser);
+          await _issueOfflineToken(approvedUser);
+          state = state.copyWith(
+            user: approvedUser,
+            successMessage: 'Dados salvos! Teste grátis de 30 dias liberado.',
+            errorMessage: null,
+          );
+          return true;
+        } else if (trial != null && trial['ok'] == false) {
+          final trialMsg = trial['message'] as String? ??
+              'Período de teste já utilizado neste CPF ou aparelho nos últimos 12 meses.';
+          state = state.copyWith(
+            user: updated,
+            errorMessage: trialMsg,
+            successMessage: null,
+          );
+          return false;
+        }
+      } catch (_) {}
+    }
+
     state = state.copyWith(
       user: updated,
-      errorMessage:
-          'Salvo no aparelho, mas o servidor recusou: $remoteError',
-      successMessage: null,
+      successMessage: 'Perfil atualizado no banco de dados!',
+      errorMessage: null,
     );
-    return false;
+    return true;
   }
 
   // ─── LOGOUT ───────────────────────────────────────────────────────────────
