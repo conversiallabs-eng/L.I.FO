@@ -111,12 +111,10 @@ class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
   }
 
   String _formatDate(DateTime dt) {
-    const weekDays = ['seg.', 'ter.', 'qua.', 'qui.', 'sex.', 'sáb.', 'dom.'];
-    const months = ['jan.', 'fev.', 'mar.', 'abr.', 'mai.', 'jun.', 'jul.', 'ago.', 'set.', 'out.', 'nov.', 'dez.'];
-    final dayName = weekDays[(dt.weekday - 1).clamp(0, 6)];
-    final day = dt.day;
-    final month = months[(dt.month - 1).clamp(0, 11)];
-    return 'Expira em $dayName $day de $month';
+    final day = dt.day.toString().padLeft(2, '0');
+    final month = dt.month.toString().padLeft(2, '0');
+    final year = dt.year.toString();
+    return 'Válido até $day/$month/$year';
   }
 
   /// Entra em modo de edição; [focusField] já abre o teclado nesse campo.
@@ -314,7 +312,7 @@ class _MyAccountScreenState extends ConsumerState<MyAccountScreen> {
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
-                      '${user.plan} (Ativo) • ${_formatDate(user.expiresAt)}',
+                      '${user.plan} • ${_formatDate(user.expiresAt)}',
                       style: const TextStyle(
                         color: Color(0xFF2563EB),
                         fontSize: 12,
