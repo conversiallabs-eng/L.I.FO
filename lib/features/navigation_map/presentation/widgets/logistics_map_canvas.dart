@@ -471,9 +471,10 @@ class _LogisticsMapCanvasState extends State<LogisticsMapCanvas> {
                   },
                 )
               else if (isDark) ...[
-                // Estilo noturno nativo (dark-v11).
+                // Estilo noturno estilo Uber (OpenStreetMap + dark filter, com fallback para Mapbox dark).
                 TileLayer(
                   urlTemplate: MapTiles.roadsDark,
+                  fallbackUrl: MapTiles.fallbackRoadsDark,
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
                   retinaMode: false,
@@ -485,9 +486,6 @@ class _LogisticsMapCanvasState extends State<LogisticsMapCanvas> {
                     colorFilter: _darkLiftFilter,
                     child: tileWidget,
                   ),
-                  // 2/1 são os padrões do flutter_map: menos tiles carregados e
-                  // decodificados fora da tela — menos memória e menos trabalho
-                  // por frame durante o pinch.
                   keepBuffer: 2,
                   panBuffer: 1,
                   tileDisplay: const TileDisplay.instantaneous(),
@@ -497,17 +495,15 @@ class _LogisticsMapCanvasState extends State<LogisticsMapCanvas> {
                   },
                 ),
               ] else ...[
-                // Vias no tema claro (streets-v12).
+                // Vias no tema claro (OpenStreetMap com fallback CARTO / Mapbox).
                 TileLayer(
                   urlTemplate: MapTiles.roads,
+                  fallbackUrl: MapTiles.fallbackRoads,
                   userAgentPackageName: 'com.lifo.app',
                   tileProvider: tileProvider,
                   retinaMode: false,
                   maxZoom: 18,
                   maxNativeZoom: roadsNativeZoom,
-                  // 2/1 são os padrões do flutter_map: menos tiles carregados e
-                  // decodificados fora da tela — menos memória e menos trabalho
-                  // por frame durante o pinch.
                   keepBuffer: 2,
                   panBuffer: 1,
                   tileDisplay: const TileDisplay.instantaneous(),

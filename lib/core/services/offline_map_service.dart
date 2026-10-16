@@ -276,7 +276,8 @@ class OfflineMapService {
       minZoom: minZoom,
       maxZoom: maxZoom,
     ).length;
-    return includeDark ? n * 2 : n;
+    final needsSeparateDark = includeDark && MapTiles.roadsDark != MapTiles.roads;
+    return needsSeparateDark ? n * 2 : n;
   }
 
   // IGUAL ao TileLayer em tela (flutter_map, default): subdomains [a,b,c]
@@ -327,9 +328,10 @@ class OfflineMapService {
         maxZoom: maxZoom,
       );
       final urls = <String>[];
+      final separateDark = includeDark && MapTiles.roadsDark != MapTiles.roads;
       for (final (z, x, y) in tiles) {
         urls.add(_tileUrl(MapTiles.roads, z, x, y));
-        if (includeDark) urls.add(_tileUrl(MapTiles.roadsDark, z, x, y));
+        if (separateDark) urls.add(_tileUrl(MapTiles.roadsDark, z, x, y));
       }
       if (urls.length > kOfflineMaxTilesPerRegion * 2) {
         throw StateError(

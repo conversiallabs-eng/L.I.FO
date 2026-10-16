@@ -24,6 +24,7 @@ class TileCache {
   TileCache._internal();
 
   CachedTileProvider? _provider;
+  HiveCacheStore? _store;
   String? _storePath;
 
   bool get isReady => _provider != null;
@@ -43,6 +44,15 @@ class TileCache {
     }
   }
 
+  /// Limpa todos os tiles baixados em disco quando o usuário solicitar.
+  Future<void> clearAllCache() async {
+    try {
+      await _store?.clean();
+    } catch (e) {
+      debugPrint('Erro ao limpar cache de mapas: $e');
+    }
+  }
+
   /// NUNCA trava o boot: timeout curto + fallback silencioso.
   /// [extraHeaders]: identificação do app (pacote + cert) p/ travas de
   /// provedor (ex.: mobile-app da CARTO). Vão no Dio do cache e no prefetch.
@@ -57,6 +67,7 @@ class TileCache {
         '${dir.path}/lifo_map_tiles',
         hiveBoxName: 'lifo_map_tiles_v1',
       );
+      _store = store;
       _provider = CachedTileProvider(
         store: store,
         // NÃO usar const aqui: o flutter_map/Dio muta o map de headers
@@ -65,8 +76,9 @@ class TileCache {
           'User-Agent': 'LifoApp/1.0 (com.lifo.app)',
           if (extraHeaders != null) ...extraHeaders,
         },
-        // Ruas mudam devagar: 30 dias sem revalidar é seguro e rápido.
-        maxStale: const Duration(days: 30),
+        // Mapa offline permanente: sem expiração (100 anos).
+        // Baixou, fica no aparelho para sempre. Só apaga quando o usuário excluir.
+        maxStale: const Duration(days: 36500),
       );
       _storePath = '${dir.path}/lifo_map_tiles';
       debugPrint('TileCache pronto em $_storePath');

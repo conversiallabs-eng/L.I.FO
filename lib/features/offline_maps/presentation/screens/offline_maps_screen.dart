@@ -163,8 +163,7 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
       builder: (c) => AlertDialog(
         title: const Text('Apagar mapa offline?'),
         content: Text(
-          '"${r.displayName}" sai da lista. Os tiles continuam no cache '
-          'até expirarem (30 dias).',
+          'Deseja remover "${r.displayName}" da lista de regiões offline salvas?',
         ),
         actions: [
           TextButton(
@@ -173,7 +172,7 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(c, true),
-            child: const Text('Apagar'),
+            child: const Text('Remover'),
           ),
         ],
       ),
@@ -181,6 +180,34 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
     if (ok != true) return;
     try {
       await AppDatabase.instance.deleteOfflineRegion(r.cityKey);
+      await _refresh();
+    } catch (_) {}
+  }
+
+  Future<void> _confirmClearCache() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Limpar cache de mapas?'),
+        content: const Text(
+          'Isso liberará o espaço em disco ocupado pelos blocos de mapa baixados. '
+          'Você poderá baixar suas cidades novamente a qualquer momento.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('Limpar'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      await TileCache.instance.clearAllCache();
       await _refresh();
     } catch (_) {}
   }
@@ -203,13 +230,42 @@ class _OfflineMapsScreenState extends State<OfflineMapsScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Text(
-                            'Cache em disco: ${_fmtBytes(_cacheBytes)}',
-                            style: TextStyle(
-                              color: isDark
-                                  ? const Color(0xFF94A3B8)
-                                  : const Color(0xFF475569),
-                            ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Cache em disco: ${_fmtBytes(_cacheBytes)}',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w600,
+                                        color: isDark
+                                            ? const Color(0xFFE2E8F0)
+                                            : const Color(0xFF1E293B),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'Mapas permanentes (sem expiração)',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: isDark
+                                            ? const Color(0xFF94A3B8)
+                                            : const Color(0xFF64748B),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              if ((_cacheBytes ?? 0) > 0)
+                                TextButton.icon(
+                                  onPressed: _busy ? null : _confirmClearCache,
+                                  icon: const Icon(Icons.cleaning_services, size: 16),
+                                  label: const Text('Limpar', style: TextStyle(fontSize: 12)),
+                                ),
+                            ],
                           ),
                           const SizedBox(height: 12),
                           ElevatedButton.icon(
