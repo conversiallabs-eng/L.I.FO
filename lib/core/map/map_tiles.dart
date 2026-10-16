@@ -45,38 +45,35 @@ class MapTiles {
   static String _style(String styleId) =>
       '$_stylesBase/$styleId/tiles/256/{z}/{x}/{y}{r}?access_token=$_token';
 
-  /// CARTO raster (Voyager / Dark Matter)
+  /// CARTO raster (Positron 'light_all' / Dark Matter 'dark_all')
+  /// Baseado 100% em dados do OpenStreetMap, com estilização minimalista e moderna estilo Uber.
   static String _carto(String style, String? key) =>
       key != null && key.isNotEmpty
           ? 'https://basemaps.cartocdn.com/rastertiles/$style/{z}/{x}/{y}{r}.png?key=$key'
           : 'https://basemaps.cartocdn.com/rastertiles/$style/{z}/{x}/{y}{r}.png';
 
-  /// Vias, tema claro: Padrão OpenStreetMap (Fallback: CARTO Voyager ou Mapbox Streets)
-  static String get roads => osmStandard;
+  /// Vias, tema claro: CARTO Positron (estilo Uber - limpo, minimalista, fundo off-white)
+  static String get roads => _carto('light_all', _cartoKey);
 
-  /// Fallback de vias claras caso o OSM falhe:
-  static String get fallbackRoads =>
-      _cartoKey != null ? _carto('voyager', _cartoKey) : _style('streets-v12');
+  /// Fallback de vias claras (se CARTO oscilar): OpenStreetMap padrão oficial
+  static String get fallbackRoads => osmStandard;
 
-  /// Vias, tema noturno (estilo Uber):
-  /// CARTO Dark Matter (se key) ou OpenStreetMap com filtro de matriz escura; fallback Mapbox dark-v11.
-  static String get roadsDark =>
-      _cartoKey != null ? _carto('dark_all', _cartoKey) : osmStandard;
+  /// Vias, tema noturno: CARTO Dark Matter (estilo Uber Black - grafite elegante)
+  static String get roadsDark => _carto('dark_all', _cartoKey);
 
-  /// Fallback de vias escuras caso o primário falhe:
-  static String get fallbackRoadsDark => _style('dark-v11');
+  /// Fallback de vias escuras: OpenStreetMap padrão oficial
+  static String get fallbackRoadsDark => osmStandard;
 
-  /// URL padrão para Download Offline (OpenStreetMap sem expiração e sem limites)
-  static String get offlineDownloadUrl => osmStandard;
-  static String get offlineDownloadUrlDark =>
-      _cartoKey != null ? _carto('dark_all', _cartoKey) : osmStandard;
+  /// URL padrão para Download Offline (Baixa os tiles limpos Positron/Dark Matter para sempre)
+  static String get offlineDownloadUrl => _carto('light_all', _cartoKey);
+  static String get offlineDownloadUrlDark => _carto('dark_all', _cartoKey);
 
   /// Satélite com rótulos de rua (Mapbox — melhor imagem).
   static String get satellite => _style('satellite-streets-v12');
 
   /// Atribuição exigida por licença
   static String get attribution =>
-      '© OpenStreetMap contributors © CARTO © Mapbox';
+      '© OpenStreetMap contributors © CARTO';
 
   /// Satélite: imagem © Maxar + rótulos do OpenStreetMap.
   static const String attributionSatellite = '© Mapbox © Maxar © OpenStreetMap';

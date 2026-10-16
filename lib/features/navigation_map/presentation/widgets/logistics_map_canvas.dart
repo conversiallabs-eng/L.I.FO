@@ -471,7 +471,7 @@ class _LogisticsMapCanvasState extends State<LogisticsMapCanvas> {
                   },
                 )
               else if (isDark) ...[
-                // Estilo noturno estilo Uber (OpenStreetMap + dark filter, com fallback para Mapbox dark).
+                // Estilo noturno estilo Uber (CARTO Dark Matter nativo com fallback OSM).
                 TileLayer(
                   urlTemplate: MapTiles.roadsDark,
                   fallbackUrl: MapTiles.fallbackRoadsDark,
@@ -495,7 +495,7 @@ class _LogisticsMapCanvasState extends State<LogisticsMapCanvas> {
                   },
                 ),
               ] else ...[
-                // Vias no tema claro (OpenStreetMap com fallback CARTO / Mapbox).
+                // Vias no tema claro (CARTO Positron - estilo Uber com fallback OSM).
                 TileLayer(
                   urlTemplate: MapTiles.roads,
                   fallbackUrl: MapTiles.fallbackRoads,

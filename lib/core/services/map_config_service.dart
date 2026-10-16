@@ -88,7 +88,7 @@ class MapConfigService {
   Future<bool> _probeCartoKey(String key) async {
     try {
       final url = Uri.parse(
-        'https://basemaps.cartocdn.com/rastertiles/voyager/10/374/593.png?key=$key',
+        'https://basemaps.cartocdn.com/rastertiles/light_all/10/374/593.png?key=$key',
       );
       final res = await http.get(
         url,

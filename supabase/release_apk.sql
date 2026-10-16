@@ -23,13 +23,13 @@ CREATE POLICY "Anon can read release keys"
   TO anon
   USING (key IN ('latest_version', 'latest_build', 'apk_url', 'release_notes'));
 
--- 2. Registrar versão publicada (v1.0.4 build 5)
+-- 2. Registrar versão publicada (v1.0.4 build 6)
 INSERT INTO public.app_config (key, value, updated_at)
 VALUES
   ('latest_version', '1.0.4',                                        now()),
-  ('latest_build',   '5',                                            now()),
+  ('latest_build',   '6',                                            now()),
   ('apk_url',        'https://lifo.com.br/lifo.apk',                  now()),
-  ('release_notes',  'Mapa padrão OpenStreetMap com download offline permanente (sem expiração), fallbacks CARTO/Mapbox/OSRM e melhorias visuais.', now())
+  ('release_notes',  'Visual minimalista estilo Uber (CARTO Positron claro e Dark Matter escuro com dados OpenStreetMap), cache offline permanente e fallback OSM.', now())
 ON CONFLICT (key) DO UPDATE
   SET value = EXCLUDED.value, updated_at = now();
 
