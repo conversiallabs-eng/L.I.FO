@@ -9,6 +9,7 @@ import '../../../../core/database/app_database.dart';
 import '../../../../core/network/supabase_service.dart';
 import '../../../../core/security/license_guard.dart';
 import '../../../../core/services/device_security_service.dart';
+import '../../../../core/utils/cpf_validator.dart';
 import '../../data/services/google_auth_service.dart';
 import '../../domain/models/user_profile.dart';
 
@@ -809,13 +810,24 @@ class AuthController extends StateNotifier<AuthState> {
       final userId = supaUser.id;
 
       final cleanCpf = (cpf ?? '').replaceAll(RegExp(r'\D'), '');
+      final hasValidCpf =
+          cleanCpf.length == 11 && CpfValidator.isValid(cleanCpf);
+
+      if (!hasValidCpf) {
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage:
+              'CPF obrigatório e inválido. Digite um CPF válido com 11 dígitos.',
+        );
+        return false;
+      }
 
       var newUser = UserProfile(
         id: userId,
         name: name.trim(),
         email: email.trim().toLowerCase(),
-        plan: 'Standard (Trial 30 Dias)',
-        expiresAt: DateTime.now().add(const Duration(days: 30)),
+        plan: 'Pendente de Ativação',
+        expiresAt: DateTime.now(), // Inicia estritamente com 0 dias!
         isLoggedIn: true,
         isGoogleAuth: false,
         vehicleType: vehicleType ?? 'Van de Carga',
@@ -844,7 +856,8 @@ class AuthController extends StateNotifier<AuthState> {
       // Trial único via servidor com validação de Hardware (anti-rodízio)
       try {
         final fp = await DeviceSecurityService.instance.getDeviceFingerprint();
-        final trial = await SupabaseService.instance.startTrial(deviceFingerprint: fp);
+        final trial =
+            await SupabaseService.instance.startTrial(deviceFingerprint: fp);
         if (trial != null && trial['ok'] == false) {
           final msg = trial['message'] as String? ??
               'Período de teste já utilizado neste CPF ou aparelho nos últimos 12 meses.';
@@ -862,26 +875,42 @@ class AuthController extends StateNotifier<AuthState> {
         }
         final exp = DateTime.tryParse(trial?['expires_at'] as String? ?? '');
         if (trial?['ok'] == true && exp != null) {
-          newUser = newUser.copyWith(expiresAt: exp);
+          newUser = newUser.copyWith(
+            plan: 'Standard (Trial 30 Dias)',
+            expiresAt: exp,
+          );
           await _saveProfile(newUser);
+          await _issueOfflineToken(newUser);
+          state = state.copyWith(
+            user: newUser,
+            isLoading: false,
+            isOffline: false,
+            successMessage: 'Conta criada! 30 dias de trial liberados.',
+          );
+          HapticFeedback.mediumImpact();
+          return true;
+        } else {
+          state = state.copyWith(
+            user: newUser,
+            isLoading: false,
+            errorMessage: trial?['message'] ??
+                'Não foi possível ativar o período de teste.',
+          );
+          return false;
         }
-      } catch (_) {}
-
-      // Token offline com a validade do trial recém-criado.
-      await _issueOfflineToken(newUser);
-
-      state = state.copyWith(
-        user: newUser,
-        isLoading: false,
-        isOffline: false,
-        successMessage: 'Conta criada! 30 dias de trial liberados.',
-      );
-      HapticFeedback.mediumImpact();
-      return true;
+      } catch (_) {
+        state = state.copyWith(
+          user: newUser,
+          isLoading: false,
+          errorMessage: 'Erro ao validar período de teste com o servidor.',
+        );
+        return false;
+      }
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
-        errorMessage: 'Erro ao criar conta. Verifique sua conexão e tente novamente.',
+        errorMessage:
+            'Erro ao criar conta. Verifique sua conexão e tente novamente.',
       );
       return false;
     }
@@ -903,10 +932,11 @@ class AuthController extends StateNotifier<AuthState> {
 
     try {
       final cleanCpf = cpf.replaceAll(RegExp(r'\D'), '');
-      if (cleanCpf.length != 11) {
+      if (cleanCpf.length != 11 || !CpfValidator.isValid(cleanCpf)) {
         state = state.copyWith(
           isLoading: false,
-          errorMessage: 'CPF inválido. Certifique-se de digitar 11 números.',
+          errorMessage:
+              'CPF inválido. Certifique-se de digitar um CPF válido com 11 dígitos.',
         );
         return false;
       }
@@ -1263,7 +1293,9 @@ class AuthController extends StateNotifier<AuthState> {
     final isPendingTrial = state.user.plan.toLowerCase().contains('pendente') ||
         !state.user.expiresAt.isAfter(DateTime.now());
 
-    if (cleanCpf.length == 11 && isPendingTrial) {
+    if (cleanCpf.length == 11 &&
+        CpfValidator.isValid(cleanCpf) &&
+        isPendingTrial) {
       try {
         final fp = await DeviceSecurityService.instance.getDeviceFingerprint();
         final trial = await SupabaseService.instance.startTrial(deviceFingerprint: fp);

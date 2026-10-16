@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../network/supabase_service.dart';
 
 /// Versão publicada do APK — uma linha do `app_config` no Supabase.
 ///
@@ -240,6 +241,11 @@ class AppUpdateService {
   /// (era o que a mensagem dizia antes, mentindo para o usuário).
   Future<(AppRelease?, bool)> _fetchRemote() async {
     try {
+      if (!SupabaseService.instance.isInitialized) {
+        await SupabaseService.instance
+            .initialize()
+            .timeout(const Duration(seconds: 4));
+      }
       final rows = await Supabase.instance.client
           .from('app_config')
           .select('key, value')
@@ -306,6 +312,275 @@ class AppUpdateService {
           false;
     } catch (_) {
       return false;
+    }
+  }
+
+  bool _isDialogShowing = false;
+  bool get isDialogShowing => _isDialogShowing;
+
+  /// Exibe o diálogo global de notificação de atualização se não estiver aberto.
+  Future<void> showUpdateDialog(
+    BuildContext context,
+    AppRelease release, {
+    VoidCallback? onDismiss,
+  }) async {
+    if (_isDialogShowing) return;
+    _isDialogShowing = true;
+
+    try {
+      final start = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dCtx) {
+          final isDark = Theme.of(dCtx).brightness == Brightness.dark;
+          final titleColor = isDark ? Colors.white : const Color(0xFF0F172A);
+          final subColor =
+              isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+          final cardBg = isDark ? const Color(0xFF1E293B) : Colors.white;
+
+          return AlertDialog(
+            backgroundColor: cardBg,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2563EB).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.system_update_rounded,
+                      color: Color(0xFF2563EB), size: 24),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Nova Versão Disponível!',
+                    style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                        color: titleColor),
+                  ),
+                ),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? const Color(0xFF0F172A)
+                          : const Color(0xFFF1F5F9),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Versão Instalada:',
+                              style: TextStyle(fontSize: 12, color: subColor),
+                            ),
+                            Text(
+                              installedLabel.value.isNotEmpty
+                                  ? installedLabel.value
+                                  : '$_installedVersion ($_installedBuild)',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: titleColor),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Nova Publicada:',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF2563EB)),
+                            ),
+                            Text(
+                              '${release.version} (${release.build})',
+                              style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFF2563EB)),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (release.notes.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    Text(
+                      'Novidades:',
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: titleColor),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      release.notes,
+                      style: TextStyle(
+                          fontSize: 12.5, color: subColor, height: 1.35),
+                    ),
+                  ],
+                  const SizedBox(height: 14),
+                  Text(
+                    'O download é realizado em alta velocidade e o instalador do sistema será aberto automaticamente.',
+                    style: TextStyle(fontSize: 11.5, color: subColor),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(dCtx).pop(false);
+                  onDismiss?.call();
+                },
+                child: Text('Mais Tarde', style: TextStyle(color: subColor)),
+              ),
+              FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF2563EB),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                ),
+                onPressed: () => Navigator.of(dCtx).pop(true),
+                icon: const Icon(Icons.download_rounded, size: 18),
+                label: const Text('Baixar e Instalar'),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (start == true && context.mounted) {
+        await executeDownloadAndInstall(context, release);
+      }
+    } finally {
+      _isDialogShowing = false;
+    }
+  }
+
+  /// Executa o download com barra de progresso modal e abre o instalador nativo.
+  Future<void> executeDownloadAndInstall(
+      BuildContext context, AppRelease release) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final progress = ValueNotifier<double>(0);
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dCtx) {
+        final isDark = Theme.of(dCtx).brightness == Brightness.dark;
+        return AlertDialog(
+          backgroundColor: isDark ? const Color(0xFF1E293B) : Colors.white,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          content: ValueListenableBuilder<double>(
+            valueListenable: progress,
+            builder: (_, value, _) => Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2.5),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Baixando atualização ${release.version}…',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 13.5),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: LinearProgressIndicator(
+                    value: value <= 0 ? null : value,
+                    minHeight: 8,
+                    backgroundColor: isDark
+                        ? const Color(0xFF334155)
+                        : const Color(0xFFE2E8F0),
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                        Color(0xFF2563EB)),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    '${(value * 100).clamp(0, 100).toStringAsFixed(0)}%',
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    final outcome = await downloadAndInstall(
+      onProgress: (p) => progress.value = p,
+    );
+
+    if (context.mounted) {
+      Navigator.of(context, rootNavigator: true).pop();
+    }
+    progress.dispose();
+
+    if (!context.mounted) return;
+
+    switch (outcome) {
+      case InstallOutcome.installerOpened:
+        messenger.showSnackBar(const SnackBar(
+          content: Text(
+              'Download concluído! Confirme a instalação na tela do Android.'),
+          backgroundColor: Color(0xFF2563EB),
+          behavior: SnackBarBehavior.floating,
+        ));
+      case InstallOutcome.needsPermission:
+        messenger.showSnackBar(const SnackBar(
+          content: Text(
+            'Autorize "Instalar apps desconhecidos" para o Lifo e tente novamente.',
+          ),
+          backgroundColor: Color(0xFFD97706),
+          behavior: SnackBarBehavior.floating,
+          duration: Duration(seconds: 6),
+        ));
+      case InstallOutcome.failed:
+        messenger.showSnackBar(const SnackBar(
+          content: Text(
+              'Falha ao baixar atualização. Verifique a internet e tente novamente.'),
+          backgroundColor: Color(0xFFDC2626),
+          behavior: SnackBarBehavior.floating,
+        ));
+      case InstallOutcome.noUpdate:
+        break;
     }
   }
 

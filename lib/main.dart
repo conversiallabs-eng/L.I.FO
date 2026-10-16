@@ -9,10 +9,14 @@ import 'core/network/supabase_service.dart';
 import 'core/network/connectivity_service.dart';
 import 'core/services/map_config_service.dart';
 import 'core/services/vector_style_service.dart';
+import 'core/services/app_update_service.dart';
+import 'core/utils/cpf_validator.dart';
 import 'features/dashboard/presentation/screens/home_dashboard_screen.dart';
 import 'features/auth/presentation/controllers/auth_controller.dart';
 import 'features/auth/presentation/screens/login_screen.dart';
 import 'features/auth/presentation/screens/complete_registration_screen.dart';
+
+final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -86,28 +90,67 @@ void main() async {
   ConnectivityService.instance.attach(container);
 }
 
-class LifoApp extends ConsumerWidget {
+class LifoApp extends ConsumerStatefulWidget {
   const LifoApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<LifoApp> createState() => _LifoAppState();
+}
+
+class _LifoAppState extends ConsumerState<LifoApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkAndPromptUpdate();
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkAndPromptUpdate();
+    }
+  }
+
+  Future<void> _checkAndPromptUpdate() async {
+    try {
+      final result = await AppUpdateService.instance.checkForUpdate();
+      if (result == UpdateCheck.available) {
+        final release = AppUpdateService.instance.availableUpdate.value;
+        final navContext = rootNavigatorKey.currentContext;
+        if (release != null && navContext != null && navContext.mounted) {
+          AppUpdateService.instance.showUpdateDialog(navContext, release);
+        }
+      }
+    } catch (e) {
+      debugPrint('LifoApp: erro ao checar atualização: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final authState = ref.watch(authControllerProvider);
 
     Widget home;
     String switchKey;
     final user = authState.user;
-    // Expirado sem oferta de confiança não usa (com oferta entra travado
+
     // Separação de telas: Ativação de Teste Grátis vs Checkout
-    // Se o usuário está logado mas ainda não ativou o trial (sem CPF ou 'Pendente de Ativação'),
-    // ele vai para a tela de ativação de 30 dias grátis (CompleteRegistrationScreen),
+    // Se o usuário está logado mas ainda não tem CPF válido auditado ou está com 'Pendente de Ativação',
+    // ele vai estritamente para a tela de ativação de 30 dias grátis (CompleteRegistrationScreen).
     // NUNCA para a tela de checkout (PIX).
     final cleanCpf = (user.cpf ?? '').replaceAll(RegExp(r'\D'), '');
+    final hasValidCpf = cleanCpf.length == 11 && CpfValidator.isValid(cleanCpf);
     final isPendingActivation = user.isLoggedIn &&
-        (cleanCpf.length != 11 || user.plan.toLowerCase().contains('pendente'));
-
-    final expired =
-        user.isLoggedIn && !isPendingActivation && !user.expiresAt.isAfter(DateTime.now());
-    final blocked = user.isLoggedIn && expired && !authState.graceOfferPending;
+        (!hasValidCpf || user.plan.toLowerCase().contains('pendente'));
 
     if (authState.isBooting) {
       home = const _BootSplash();
@@ -115,7 +158,7 @@ class LifoApp extends ConsumerWidget {
     } else if (isPendingActivation) {
       home = const CompleteRegistrationScreen();
       switchKey = 'complete_registration';
-    } else if (user.isLoggedIn && !blocked) {
+    } else if (user.isLoggedIn) {
       home = const HomeDashboardScreen();
       switchKey = 'home';
     } else {
@@ -124,6 +167,7 @@ class LifoApp extends ConsumerWidget {
     }
 
     return MaterialApp(
+      navigatorKey: rootNavigatorKey,
       title: 'Lifo - Otimizador Logistico',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,

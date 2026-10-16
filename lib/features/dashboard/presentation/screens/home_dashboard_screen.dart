@@ -12,6 +12,7 @@ import '../../../../core/layout/map_split_layout.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/models/route_step.dart';
 import '../../../../core/utils/lifo_calculator.dart';
+import '../../../../core/utils/cpf_validator.dart';
 import '../../../route_manifest/domain/models/delivery_stop.dart';
 import '../../../route_manifest/domain/models/package_item.dart';
 import '../../../route_manifest/domain/models/spatial_slot.dart';
@@ -425,8 +426,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     if (_graceLockOpened || !mounted) return;
     final auth = ref.read(authControllerProvider);
     if (!auth.user.isLoggedIn) return;
-    // Se o usuário ainda está em fase de ativação de trial, NUNCA trava em checkout
-    if (auth.user.plan.toLowerCase().contains('pendente')) return;
+    // Se o usuário ainda está em fase de ativação de trial (sem CPF ou pendente), NUNCA trava em checkout
+    final cleanCpf = (auth.user.cpf ?? '').replaceAll(RegExp(r'\D'), '');
+    final hasValidCpf = cleanCpf.length == 11 && CpfValidator.isValid(cleanCpf);
+    if (!hasValidCpf || auth.user.plan.toLowerCase().contains('pendente')) return;
     if (auth.user.expiresAt.isAfter(DateTime.now())) return;
     _graceLockOpened = true;
     Future.delayed(const Duration(milliseconds: 600), () {
@@ -471,7 +474,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
 
     final auth = ref.read(authControllerProvider);
     if (!auth.user.isLoggedIn) return;
-    if (auth.user.plan.toLowerCase().contains('pendente')) return;
+    final cleanCpf = (auth.user.cpf ?? '').replaceAll(RegExp(r'\D'), '');
+    final hasValidCpf = cleanCpf.length == 11 && CpfValidator.isValid(cleanCpf);
+    if (!hasValidCpf || auth.user.plan.toLowerCase().contains('pendente')) return;
     if (!auth.user.expiresAt.isAfter(DateTime.now())) return;
 
     if (!force && await AppTutorial.isSeen(AppTutorial.homeSeenKey)) return;
@@ -2858,8 +2863,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       final release = AppUpdateService.instance.availableUpdate.value;
       if (release != null) {
         _autoUpdatePrompted = true;
-        Future.delayed(const Duration(milliseconds: 1000), () {
-          if (mounted) _offerUpdate(release);
+        Future.delayed(const Duration(milliseconds: 800), () {
+          if (mounted) {
+            AppUpdateService.instance.showUpdateDialog(context, release);
+          }
         });
       }
     }
@@ -2884,7 +2891,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
 
     switch (result) {
       case UpdateCheck.available:
-        if (release != null) await _offerUpdate(release);
+        if (release != null) {
+          await update.showUpdateDialog(context, release);
+        }
       case UpdateCheck.upToDate:
         inform(
           'Você já está na versão publicada (${update.installedLabel.value}).',
@@ -2895,138 +2904,6 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         inform('Nenhuma versão publicada no servidor ainda.');
       case UpdateCheck.offline:
         inform('Sem conexão para verificar atualizações.');
-    }
-  }
-
-  /// Avisa o que vem na versão nova e só baixa se o usuário mandar.
-  Future<void> _offerUpdate(AppRelease release) async {
-    final start = await showDialog<bool>(
-      context: context,
-      builder: (dCtx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        title: const Text(
-          'Atualização disponível',
-          style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Instalada: ${AppUpdateService.instance.installedLabel.value}',
-              style: const TextStyle(fontSize: 12.5, color: Color(0xFF64748B)),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              'Publicada: ${release.version} (${release.build})',
-              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-            ),
-            if (AppUpdateService.isOlder(
-              remoteVersion: release.version,
-              remoteBuild: release.build,
-              installedVersion: AppUpdateService.instance.installedVersion,
-              installedBuild: AppUpdateService.instance.installedBuild,
-            )) ...[
-              const SizedBox(height: 8),
-              const Text(
-                'Atenção: a publicada é mais antiga que a instalada — o Android '
-                'pode recusar a instalação.',
-                style: TextStyle(
-                  fontSize: 11.5,
-                  color: AppColors.statusDanger,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-            if (release.notes.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Text(release.notes, style: const TextStyle(fontSize: 12.5)),
-            ],
-            const SizedBox(height: 10),
-            const Text(
-              'O download é feito pelo app e a instalação é confirmada pelo '
-              'Android.',
-              style: TextStyle(fontSize: 11.5, color: Color(0xFF64748B)),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dCtx, false),
-            child: const Text('Depois'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dCtx, true),
-            child: const Text('Baixar e instalar'),
-          ),
-        ],
-      ),
-    );
-    if (start != true || !mounted) return;
-    await _runUpdate(release);
-  }
-
-  /// Baixa com barra de progresso e chama o instalador do Android.
-  Future<void> _runUpdate(AppRelease release) async {
-    final messenger = ScaffoldMessenger.of(context);
-    final navigator = Navigator.of(context, rootNavigator: true);
-    final progress = ValueNotifier<double>(0);
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        content: ValueListenableBuilder<double>(
-          valueListenable: progress,
-          builder: (_, value, _) => Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Baixando ${release.version}…',
-                style: const TextStyle(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 14),
-              LinearProgressIndicator(value: value <= 0 ? null : value),
-              const SizedBox(height: 8),
-              Text(
-                '${(value * 100).clamp(0, 100).toStringAsFixed(0)}%',
-                style: const TextStyle(fontSize: 12),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    final outcome = await AppUpdateService.instance.downloadAndInstall(
-      onProgress: (p) => progress.value = p,
-    );
-    if (mounted) navigator.pop();
-    progress.dispose();
-    if (!mounted) return;
-
-    switch (outcome) {
-      case InstallOutcome.installerOpened:
-        messenger.showSnackBar(const SnackBar(
-          content: Text('Download concluído — confirme a instalação no Android.'),
-          behavior: SnackBarBehavior.floating,
-        ));
-      case InstallOutcome.needsPermission:
-        // O sistema já abriu a autorização de fontes desconhecidas.
-        messenger.showSnackBar(const SnackBar(
-          content: Text(
-            'Autorize "Instalar apps desconhecidos" para o Lifo e toque em '
-            'Atualizar de novo.',
-          ),            behavior: SnackBarBehavior.floating,
-            duration: Duration(seconds: 6),
-          ));
-        case InstallOutcome.failed:
-        messenger.showSnackBar(const SnackBar(
-          content: Text('Falha ao baixar a atualização. Tente novamente.'),
-          behavior: SnackBarBehavior.floating,
-        ));
-      case InstallOutcome.noUpdate:
-        break;
     }
   }
 

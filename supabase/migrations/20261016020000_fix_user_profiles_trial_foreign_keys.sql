@@ -2,11 +2,13 @@
 -- Fix user_profiles expires_at default & subscriptions foreign key constraint
 -- ============================================================================
 
--- 1. Garante que expires_at nunca falhe por NOT NULL sem default no insert/upsert
-ALTER TABLE public.user_profiles ALTER COLUMN expires_at SET DEFAULT (now() + interval '30 days');
+-- 1. Garante que novos perfis nascem com ZERO dias (Pendente de Ativação / now())
+-- Os 30 dias SÓ podem ser liberados pela função fn_start_trial após validação de CPF!
+ALTER TABLE public.user_profiles ALTER COLUMN plan SET DEFAULT 'Pendente de Ativação';
+ALTER TABLE public.user_profiles ALTER COLUMN expires_at SET DEFAULT now();
 ALTER TABLE public.user_profiles ALTER COLUMN expires_at DROP NOT NULL;
 
--- 2. Corrige FK de subscriptions para apontar para auth.users(id) em vez de tabela legada
+-- 2. Corrige FK de subscriptions para apontar para auth.users(id)
 ALTER TABLE public.subscriptions DROP CONSTRAINT IF EXISTS subscriptions_user_id_fkey;
 ALTER TABLE public.subscriptions 
   ADD CONSTRAINT subscriptions_user_id_fkey 
