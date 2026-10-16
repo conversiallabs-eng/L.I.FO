@@ -34,6 +34,7 @@ import '../../../auth/presentation/screens/create_account_screen.dart';
 import '../../../auth/presentation/screens/my_account_screen.dart';
 import '../../../auth/presentation/screens/subscription_renewal_screen.dart';
 import '../../../auth/presentation/screens/login_screen.dart';
+import '../../../auth/presentation/screens/complete_registration_screen.dart';
 import '../../../auth/presentation/screens/legal_document_screen.dart';
 import '../../../auth/presentation/widgets/google_sign_in_button.dart';
 import '../../../onboarding/data/tutorial_prefs.dart';
@@ -398,6 +399,21 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     // Bolhinha e alerta automático de atualização no boot: checa a versão publicada
     // no servidor e, se houver nova versão, abre a notificação/diálogo no app.
     unawaited(_checkUpdateOnBoot());
+    // Trava de segurança: se o usuário logado não possui CPF válido ou está
+    // pendente de ativação, é ejetado imediatamente para a tela de ativação de trial.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final auth = ref.read(authControllerProvider);
+      if (!auth.user.isLoggedIn) return;
+      final cleanCpf = (auth.user.cpf ?? '').replaceAll(RegExp(r'\D'), '');
+      final hasValidCpf = cleanCpf.length == 11 && CpfValidator.isValid(cleanCpf);
+      if (!hasValidCpf || auth.user.plan.toLowerCase().contains('pendente')) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const CompleteRegistrationScreen()),
+          (route) => false,
+        );
+      }
+    });
     // Card começa no piso (cabeçalho + botão inteiros, sem lista): o
     // usuário levanta se quiser. Só na 1ª montagem e sem toque anterior.
     WidgetsBinding.instance.addPostFrameCallback((_) {

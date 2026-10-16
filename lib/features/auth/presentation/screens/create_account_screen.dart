@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/utils/cpf_validator.dart';
+import '../../../dashboard/presentation/screens/home_dashboard_screen.dart';
 import '../controllers/auth_controller.dart';
 import '../widgets/google_sign_in_button.dart';
+import 'complete_registration_screen.dart';
 import 'legal_document_screen.dart';
 
 class CreateAccountScreen extends ConsumerStatefulWidget {
@@ -127,10 +129,25 @@ class _CreateAccountScreenState extends ConsumerState<CreateAccountScreen> {
   }
 
   Future<void> _loginWithGoogle() async {
-    final success = await ref.read(authControllerProvider.notifier).loginWithGoogle();
+    final success =
+        await ref.read(authControllerProvider.notifier).loginWithGoogle();
     if (!mounted) return;
     if (success) {
-      Navigator.of(context).pop(true);
+      final user = ref.read(authControllerProvider).user;
+      final cleanCpf = (user.cpf ?? '').replaceAll(RegExp(r'\D'), '');
+      final hasValidCpf =
+          cleanCpf.length == 11 && CpfValidator.isValid(cleanCpf);
+      final isPending =
+          !hasValidCpf || user.plan.toLowerCase().contains('pendente');
+
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (_) => isPending
+              ? const CompleteRegistrationScreen()
+              : const HomeDashboardScreen(),
+        ),
+        (route) => false,
+      );
     } else {
       final error = ref.read(authControllerProvider).errorMessage;
       ScaffoldMessenger.of(context).showSnackBar(

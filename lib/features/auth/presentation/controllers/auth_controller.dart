@@ -163,10 +163,20 @@ class AuthController extends StateNotifier<AuthState> {
                 .timeout(const Duration(seconds: 5));
             if (remoteProfile != null) {
               debugPrint('AuthBoot: perfil restaurado (online).');
+              final cleanCpf = (remoteProfile.cpf ?? '').replaceAll(RegExp(r'\D'), '');
+              final hasValidCpf = cleanCpf.length == 11 && CpfValidator.isValid(cleanCpf);
+              final isPending = !hasValidCpf || remoteProfile.plan.toLowerCase().contains('pendente');
+              final effectiveProfile = isPending
+                  ? remoteProfile.copyWith(
+                      plan: 'Pendente de Ativação',
+                      expiresAt: DateTime.now().subtract(const Duration(minutes: 1)),
+                    )
+                  : remoteProfile;
+
               await _recordOnlineSync();
-              await _issueOfflineToken(remoteProfile);
+              await _issueOfflineToken(effectiveProfile);
               state = state.copyWith(
-                user: remoteProfile,
+                user: effectiveProfile,
                 isBooting: false,
                 isOffline: false,
               );
@@ -226,8 +236,19 @@ class AuthController extends StateNotifier<AuthState> {
           return;
         }
         debugPrint('AuthBoot: sessão válida mas sem perfil no servidor.');
+        final pendingUser = UserProfile(
+          id: supaUser.id,
+          name: supaUser.userMetadata?['full_name'] as String? ??
+              supaUser.email?.split('@').first ?? 'Usuário',
+          email: supaUser.email ?? '',
+          plan: 'Pendente de Ativação',
+          expiresAt: DateTime.now().subtract(const Duration(minutes: 1)),
+          isLoggedIn: true,
+          isGoogleAuth: supaUser.appMetadata['provider'] == 'google',
+        );
+        await OfflineLicenseGuard.clearLicenseToken();
         state = state.copyWith(
-          user: _guestProfile(),
+          user: pendingUser,
           isBooting: false,
           isOffline: false,
         );
@@ -310,6 +331,14 @@ class AuthController extends StateNotifier<AuthState> {
   /// servidor — nunca inventada localmente.
   Future<void> _issueOfflineToken(UserProfile profile) async {
     try {
+      final cleanCpf = (profile.cpf ?? '').replaceAll(RegExp(r'\D'), '');
+      final hasValidCpf =
+          cleanCpf.length == 11 && CpfValidator.isValid(cleanCpf);
+      // Se não possui CPF válido ou o plano está pendente, limpa qualquer token antigo do aparelho
+      if (!hasValidCpf || profile.plan.toLowerCase().contains('pendente')) {
+        await OfflineLicenseGuard.clearLicenseToken();
+        return;
+      }
       final deviceId = await _getOrCreateDeviceId();
       final token = OfflineLicenseGuard.createSignedToken(
         userId: profile.id,
@@ -343,6 +372,24 @@ class AuthController extends StateNotifier<AuthState> {
         // Cache de outro usuário — não ressuscita sessão trocada.
         // (Após logout o cache é limpo, então isso só ocorre em edge cases.)
         return null;
+      }
+
+      // Trava de segurança: se o cache local não possui CPF válido ou está
+      // com plano pendente, invalida qualquer trial antigo herdado do aparelho.
+      final cleanCpf = (cached.cpf ?? '').replaceAll(RegExp(r'\D'), '');
+      final hasValidCpf =
+          cleanCpf.length == 11 && CpfValidator.isValid(cleanCpf);
+      if (!hasValidCpf) {
+        cached = cached.copyWith(
+          plan: 'Pendente de Ativação',
+          expiresAt: DateTime.now().subtract(const Duration(minutes: 1)),
+        );
+      }
+
+      // Se está pendente de ativação, devolve o perfil logado para que
+      // o app exiba obrigatoriamente a tela de KYC (CompleteRegistrationScreen).
+      if (cached.plan.toLowerCase().contains('pendente')) {
+        return cached.copyWith(isLoggedIn: true);
       }
 
       // Cinturão: expiração do próprio cache (vale pela hora do aparelho).
@@ -1035,11 +1082,23 @@ class AuthController extends StateNotifier<AuthState> {
         final remoteProfile = await SupabaseService.instance.fetchUserProfile();
         final subscription = await SupabaseService.instance.fetchSubscription();
 
-        final plan = SupabaseService.planDisplayName(subscription);
-        final expiresAt = DateTime.tryParse(
-              subscription?['expires_at'] as String? ?? '',
-            ) ??
-            DateTime.now().add(const Duration(days: 30));
+        final cleanCpf = (remoteProfile?.cpf ?? '').replaceAll(RegExp(r'\D'), '');
+        final hasValidCpf = cleanCpf.length == 11 && CpfValidator.isValid(cleanCpf);
+
+        String plan;
+        DateTime expiresAt;
+
+        if (subscription != null) {
+          plan = SupabaseService.planDisplayName(subscription);
+          expiresAt = DateTime.tryParse(subscription['expires_at'] as String? ?? '') ??
+              DateTime.now().subtract(const Duration(minutes: 1));
+        } else if (hasValidCpf && remoteProfile != null && remoteProfile.expiresAt.isAfter(DateTime.now())) {
+          plan = remoteProfile.plan;
+          expiresAt = remoteProfile.expiresAt;
+        } else {
+          plan = 'Pendente de Ativação';
+          expiresAt = DateTime.now().subtract(const Duration(minutes: 1));
+        }
 
         final profile = (remoteProfile ?? UserProfile(
           id: supaUser.id,
@@ -1050,6 +1109,7 @@ class AuthController extends StateNotifier<AuthState> {
           expiresAt: expiresAt,
           isLoggedIn: true,
           isGoogleAuth: false,
+          cpf: remoteProfile?.cpf,
         )).copyWith(
           plan: plan,
           expiresAt: expiresAt,
@@ -1355,9 +1415,12 @@ class AuthController extends StateNotifier<AuthState> {
       );
     } catch (_) {}
 
-    // Limpa 100% da sessão local: SQLite + prefs. Sem espelho, sem fantasma.
+    // Limpa 100% da sessão local: SQLite + prefs + token offline. Sem espelho, sem fantasma.
     try {
       await AppDatabase.instance.clearUserProfile();
+    } catch (_) {}
+    try {
+      await OfflineLicenseGuard.clearLicenseToken();
     } catch (_) {}
     try {
       final prefs = await SharedPreferences.getInstance();

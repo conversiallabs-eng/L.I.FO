@@ -178,18 +178,25 @@ class SupabaseService {
 
       if (data == null) return null;
 
+      final planRaw = data['plan'] as String?;
+      final expiresRaw = data['expires_at'] as String?;
+      final cpfRaw = data['cpf'] as String?;
+      final cleanCpf = (cpfRaw ?? '').replaceAll(RegExp(r'\D'), '');
+      final hasCpf = cleanCpf.length == 11;
+
       return UserProfile(
         id: data['id'] as String? ?? currentUser!.id,
         name: data['name'] as String? ?? currentUser!.email ?? 'Usuário',
         email: data['email'] as String? ?? currentUser!.email ?? '',
-        plan: data['plan'] as String? ?? 'Standard (Trial 30 Dias)',
-        expiresAt: DateTime.tryParse(data['expires_at'] as String? ?? '') ??
-            DateTime.now().add(const Duration(days: 30)),
+        plan: (hasCpf && planRaw != null) ? planRaw : 'Pendente de Ativação',
+        expiresAt: (hasCpf && expiresRaw != null)
+            ? (DateTime.tryParse(expiresRaw) ?? DateTime.now().subtract(const Duration(minutes: 1)))
+            : DateTime.now().subtract(const Duration(minutes: 1)),
         avatarUrl: data['avatar_url'] as String?,
         vehicleType: data['vehicle_type'] as String? ?? 'Van de Carga',
         isLoggedIn: true,
         isGoogleAuth: false,
-        cpf: data['cpf'] as String?,
+        cpf: cpfRaw,
         rg: data['rg'] as String?,
         phone: data['phone'] as String?,
         billingAddress: data['billing_address'] as String?,
@@ -221,12 +228,18 @@ class SupabaseService {
 
   /// Nome amigável do plano a partir da linha da tabela `subscriptions`.
   static String planDisplayName(Map<String, dynamic>? subscription) {
+    if (subscription == null) {
+      return 'Pendente de Ativação';
+    }
     final t =
-        (subscription?['plan_type'] as String? ?? 'trial').toLowerCase();
+        (subscription['plan_type'] as String? ?? '').toLowerCase();
     if (t == 'pix_manual' || t == 'credit_card_auto') {
       return 'Standard (Ativo)';
     }
-    return 'Standard (Trial 30 Dias)';
+    if (t == 'trial') {
+      return 'Standard (Trial 30 Dias)';
+    }
+    return 'Pendente de Ativação';
   }
 
   // ─── DINHEIRO NO SERVIDOR (anti-calote) ─────────────────────────────────
