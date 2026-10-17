@@ -1126,22 +1126,190 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     }
   }
 
-  void _openScanner() async {
-    final result = await Navigator.of(context).push<Map<String, dynamic>>(
-      MaterialPageRoute(
-        builder: (_) => const CargoScannerScreen(),
-      ),
+  void _openScanner() {
+    _toggleQrPip();
+  }
+
+  /// Mostra o modal da parada escaneada exatamente no estilo solicitado:
+  /// Badge da parada, endereço, botão verde "Ir para a parada", botão azul "Editar endereço"
+  void _showScannedStopModal(DeliveryStop stop) {
+    final firstAddressLine = stop.address.split(',').first.trim();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black26,
+                blurRadius: 16,
+                offset: Offset(0, -3),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Handle bar cinza
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                // Linha com ícone e texto da parada / endereço
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      margin: const EdgeInsets.only(top: 2),
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF2563EB).withValues(alpha: 0.10),
+                        border: Border.all(
+                          color: const Color(0xFF2563EB).withValues(alpha: 0.35),
+                          width: 1.2,
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Center(
+                        child: Text(
+                          '${stop.sequenceIndex}',
+                          style: const TextStyle(
+                            color: Color(0xFF2563EB),
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                            height: 1,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Parada ${stop.sequenceIndex} no endereço $firstAddressLine',
+                            style: const TextStyle(
+                              color: Color(0xFF111827),
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            stop.address,
+                            style: const TextStyle(
+                              color: Color(0xFF6B7280),
+                              fontSize: 13,
+                            ),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: () => Navigator.of(ctx).pop(),
+                      child: const Padding(
+                        padding: EdgeInsets.all(4),
+                        child: Icon(Icons.close, size: 20, color: Color(0xFF9CA3AF)),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                // Botão Ir para a parada (navegação interna)
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                      final stops = ref.read(manifestControllerProvider).currentVersion?.stops ?? [];
+                      final idx = stops.indexWhere((s) => s.id == stop.id);
+                      if (idx != -1) {
+                        setState(() => _selectedStopIndex = idx);
+                        _startInAppNavigation(stops[idx], forceFollow: true);
+                      }
+                    },
+                    icon: const Icon(Icons.navigation_rounded, size: 20),
+                    label: const Text(
+                      'Ir para a parada',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF16A34A),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // Botão Editar endereço
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                      showEditAddressModal(context, stop);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2563EB),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    child: const Text(
+                      'Editar endereço',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Center(
+                  child: Text(
+                    'Ao editar o endereço a rota será reotimizada',
+                    style: TextStyle(
+                      color: Colors.grey.shade500,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
-    // Se o scanner sinalizou para navegar até uma parada específica
-    if (result != null && result['navigateTo'] is String && mounted) {
-      final stopId = result['navigateTo'] as String;
-      final stops = ref.read(manifestControllerProvider).currentVersion?.stops ?? [];
-      final listIdx = stops.indexWhere((s) => s.id == stopId);
-      if (listIdx != -1) {
-        setState(() => _selectedStopIndex = listIdx);
-        _startInAppNavigation(stops[listIdx], forceFollow: true);
-      }
-    }
   }
 
   /// Abre/fecha a janelinha de câmera (PiP sob demanda). Fecha sozinha
@@ -1251,6 +1419,8 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       _qrBusy = false;
       return;
     }
+    final targetStop = ownerStop ?? (ownCodes.contains(norm) ? current : null);
+
     setState(() {
       _verifiedStopId = ownerStop?.id ?? current.id;
       _verifyResult = result;
@@ -1274,6 +1444,11 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     // Sob demanda: fecha a janelinha após bipar, status permanece no card.
     _toggleQrPip(open: false);
     _qrBusy = false;
+
+    // Se não estiver em navegação ativa, abre o modalzinho da parada encontrada
+    if (!_isNavigating && targetStop != null && mounted) {
+      _showScannedStopModal(targetStop);
+    }
   }
 
   void _openVehicleBayModal() {
@@ -2309,19 +2484,18 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         tooltip: 'Minha Localização GPS',
         onTap: () => _onGpsButtonPressed(stops),
       ),
-      if (_isNavigating)
-        Container(
-          key: _coachQrKey,
-          child: _buildFloatingCircleButton(
-            context: context,
-            icon: _qrPipOpen
-                ? Icons.qr_code_scanner_rounded
-                : Icons.qr_code_2_rounded,
-            tooltip: 'Bipar etiqueta do ponto',
-            isActive: _qrPipOpen,
-            onTap: () => _toggleQrPip(),
-          ),
+      Container(
+        key: _coachQrKey,
+        child: _buildFloatingCircleButton(
+          context: context,
+          icon: _qrPipOpen
+              ? Icons.qr_code_scanner_rounded
+              : Icons.qr_code_2_rounded,
+          tooltip: 'Bipar etiqueta do ponto',
+          isActive: _qrPipOpen,
+          onTap: () => _toggleQrPip(),
         ),
+      ),
       Container(
         key: _coachArrowKey,
         child: _buildFloatingCircleButton(
@@ -2505,30 +2679,6 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
               ),
             ),
 
-            // 6. SCANNER PIP (Lado direito, ao lado dos botões sem cobri-los)
-            Positioned(
-              top: 92,
-              right: 74, // Offset para ficar à esquerda da coluna de botões (46px botão + padding)
-              child: SafeArea(
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 300),
-                  transitionBuilder: (Widget child, Animation<double> animation) {
-                    return FadeTransition(
-                      opacity: animation,
-                      child: ScaleTransition(
-                        scale: Tween<double>(begin: 0.8, end: 1.0).animate(
-                          CurvedAnimation(parent: animation, curve: Curves.easeOutBack),
-                        ),
-                        child: child,
-                      ),
-                    );
-                  },
-                  child: _qrPipOpen
-                      ? _buildQrPip(context)
-                      : const SizedBox.shrink(),
-                ),
-              ),
-            ),
 
             // 3. NAVEGAÇÃO ATIVA — Card flutuante e arrastável
             if (_isNavigating && stops.isNotEmpty && curIdx < stops.length)
@@ -2863,6 +3013,31 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                   ),
                 ),
               ),
+
+            // SCANNER PIP (Sempre no topo da pilha, visível tanto com ou sem navegação)
+            Positioned(
+              top: 92,
+              right: 74,
+              child: SafeArea(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300),
+                  transitionBuilder: (Widget child, Animation<double> animation) {
+                    return FadeTransition(
+                      opacity: animation,
+                      child: ScaleTransition(
+                        scale: Tween<double>(begin: 0.8, end: 1.0).animate(
+                          CurvedAnimation(parent: animation, curve: Curves.easeOutBack),
+                        ),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: _qrPipOpen
+                      ? _buildQrPip(context)
+                      : const SizedBox.shrink(),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -3071,76 +3246,48 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     final controller = _qrPipController;
     return Container(
       width: 148,
+      height: 170,
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
         color: Colors.black,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: border, width: 1.2),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: border, width: 1.4),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.45),
-            blurRadius: 12,
+            blurRadius: 14,
             offset: const Offset(0, 4),
           ),
         ],
       ),
       clipBehavior: Clip.antiAlias,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            height: 170,
-            child: controller == null
-                ? const Center(
-                    child: SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  )
-                : MobileScanner(
-                    controller: controller,
-                    onDetect: _onQrPipDetect,
-                    errorBuilder: (context, error) {
-                      return const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(12),
-                          child: Text(
-                            'Sem câmera',
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-          InkWell(
-            onTap: () => _toggleQrPip(open: false),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 7),
-              color: isDark
-                  ? AppColors.carbonSurfaceInput
-                  : AppColors.lightSurfaceElevated,
-              child: Text(
-                'Fechar',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  color: isDark
-                      ? AppColors.textWhite
-                      : AppColors.lightTextPrimary,
-                ),
+      child: controller == null
+          ? const Center(
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2),
               ),
+            )
+          : MobileScanner(
+              controller: controller,
+              onDetect: _onQrPipDetect,
+              errorBuilder: (context, error) {
+                return const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Text(
+                      'Sem câmera',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -3188,8 +3335,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     required DateTime? routeComputedAt,
   }) {
     final int totalStops = stops.length;
-    final int loadedCount = currentVersion?.loadedPackagesCount ?? 0;
-    final int totalCount = currentVersion?.totalPackagesInStops ?? 0;
+    final int deliveredStopsCount = stops.where((s) => s.status == StopStatus.completed).length;
     final double totalWeight = stops.fold(
       0.0,
       (acc, s) =>
@@ -3799,7 +3945,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
-                    '$loadedCount/$totalCount',
+                    '$deliveredStopsCount/$totalStops',
                     style: const TextStyle(
                       color: AppColors.circuitBlueGlow,
                       fontSize: 10,
@@ -3870,7 +4016,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
-                    '$loadedCount/$totalCount BIPADOS',
+                    '$deliveredStopsCount/$totalStops ENTREGUES',
                     style: const TextStyle(
                       color: AppColors.circuitBlueGlow,
                       fontSize: 11,
@@ -4211,6 +4357,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
 
     return GestureDetector(
       onTap: onTap,
+      onLongPress: () {
+        HapticFeedback.heavyImpact();
+        showEditAddressModal(context, stop);
+      },
       behavior: HitTestBehavior.opaque,
       child: Container(
         margin: const EdgeInsets.only(bottom: 6),
@@ -4889,27 +5039,31 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
           ? const Color(0xFF16A34A)
           : (isFailed
               ? const Color(0xFFDC2626)
-              : (isScanned ? AppColors.statusSuccess : cardBorder));
+              : (isScanned ? const Color(0xFF16A34A) : (isDark ? AppColors.carbonBorder : const Color(0xFFCBD5E1))));
 
-      final bgColor = isDelivered
-          ? const Color(0xFF16A34A).withValues(alpha: isDark ? 0.12 : 0.06)
-          : (isFailed
-              ? const Color(0xFFDC2626).withValues(alpha: isDark ? 0.12 : 0.06)
-              : (isScanned
-                  ? AppColors.statusSuccess.withValues(alpha: 0.1)
-                  : (isDark ? AppColors.carbonSurfaceInput : AppColors.lightSurfaceInput)));
+      final bgColor = isDark 
+          ? AppColors.carbonSurfaceInput 
+          : Colors.white;
 
       return Container(
         width: double.infinity,
         margin: const EdgeInsets.only(top: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
         decoration: BoxDecoration(
           color: bgColor,
           borderRadius: BorderRadius.circular(10),
           border: Border.all(
             color: borderColor,
-            width: (isDelivered || isFailed || isScanned) ? 1.4 : 1,
+            width: (isDelivered || isFailed || isScanned) ? 1.8 : 1.2,
           ),
+          boxShadow: [
+            if (!isDark)
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 4,
+                offset: const Offset(0, 1),
+              ),
+          ],
         ),
         child: Row(
           children: [
@@ -4919,24 +5073,24 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                   : (isFailed
                       ? Icons.cancel_rounded
                       : (isScanned
-                          ? Icons.qr_code_scanner_rounded
+                          ? Icons.check_circle_rounded
                           : Icons.qr_code_2_rounded)),
-              size: 16,
+              size: 18,
               color: isDelivered
                   ? const Color(0xFF16A34A)
                   : (isFailed
                       ? const Color(0xFFDC2626)
                       : (isScanned
-                          ? AppColors.statusSuccess
-                          : (isDark ? const Color(0xFF60A5FA) : const Color(0xFF2563EB)))),
+                          ? const Color(0xFF16A34A)
+                          : const Color(0xFF2563EB))),
             ),
             const SizedBox(width: 8),
             Text(
               'RASTREIO: ',
               style: TextStyle(
-                fontSize: 10.5,
+                fontSize: 11,
                 fontWeight: FontWeight.w900,
-                color: subColor,
+                color: isDark ? AppColors.textSlate : const Color(0xFF475569),
                 letterSpacing: 0.5,
               ),
             ),
@@ -4949,7 +5103,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                       ? code
                       : 'ID #${stop.sequenceIndex} (Sem código vinculado)',
                   style: TextStyle(
-                    fontSize: 12.5,
+                    fontSize: 13,
                     fontWeight: FontWeight.w800,
                     fontFamily: 'monospace',
                     color: titleColor,
@@ -4960,30 +5114,6 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                 ),
               ),
             ),
-            if (isScanned)
-              Container(
-                margin: const EdgeInsets.only(left: 4),
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF16A34A).withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.check, size: 10, color: Color(0xFF16A34A)),
-                    SizedBox(width: 2),
-                    Text(
-                      'BIPADO',
-                      style: TextStyle(
-                        fontSize: 8.5,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF16A34A),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
           ],
         ),
       );
@@ -5057,16 +5187,27 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         if ((_verifyResult == _QrCheck.other || _verifyResult == _QrCheck.far) && _verifiedStopId == stop.id) ...[
           const SizedBox(height: 10),
           Container(
-            padding: const EdgeInsets.all(10),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: AppColors.statusDanger.withValues(alpha: 0.1),
+              color: isDark ? const Color(0xFF1E1517) : Colors.white,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: AppColors.statusDanger.withValues(alpha: 0.3)),
+              border: Border.all(
+                color: const Color(0xFFDC2626),
+                width: 1.5,
+              ),
+              boxShadow: [
+                if (!isDark)
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+              ],
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(Icons.warning_amber_rounded, color: AppColors.statusDanger, size: 20),
+                const Icon(Icons.warning_amber_rounded, color: Color(0xFFDC2626), size: 22),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Column(
@@ -5180,7 +5321,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     final subColor = isDark ? AppColors.textSlate : AppColors.lightTextSecondary;
     final cardBg = isSidePanel
         ? theme.scaffoldBackgroundColor
-        : (isDark ? AppColors.carbonSurface : AppColors.lightSurfaceElevated);
+        : (isDark ? AppColors.carbonSurface : Colors.white);
     final cardBorder = isDark ? AppColors.carbonBorder : AppColors.lightBorder;
     final notes = stop.notes?.trim();
     final isFinalized = stop.status == StopStatus.completed || stop.status == StopStatus.failed;

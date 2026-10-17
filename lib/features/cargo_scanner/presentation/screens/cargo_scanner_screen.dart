@@ -576,26 +576,30 @@ class _CargoScannerScreenState extends ConsumerState<CargoScannerScreen> {
   }
 
   void _showEditAddressModal(BuildContext context, DeliveryStop stop) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => _EditAddressSheet(stop: stop),
-    );
+    showEditAddressModal(context, stop);
   }
 }
 
-/// Modal inferior para edição de endereço com geocodificação e reotimização automática
-class _EditAddressSheet extends ConsumerStatefulWidget {
-  final DeliveryStop stop;
-
-  const _EditAddressSheet({required this.stop});
-
-  @override
-  ConsumerState<_EditAddressSheet> createState() => _EditAddressSheetState();
+void showEditAddressModal(BuildContext context, DeliveryStop stop) {
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => EditAddressSheet(stop: stop),
+  );
 }
 
-class _EditAddressSheetState extends ConsumerState<_EditAddressSheet> {
+/// Modal inferior para edição de endereço com geocodificação e reotimização automática
+class EditAddressSheet extends ConsumerStatefulWidget {
+  final DeliveryStop stop;
+
+  const EditAddressSheet({super.key, required this.stop});
+
+  @override
+  ConsumerState<EditAddressSheet> createState() => _EditAddressSheetState();
+}
+
+class _EditAddressSheetState extends ConsumerState<EditAddressSheet> {
   late final TextEditingController _addressController;
   final GeocodingService _geocodingService = GeocodingService();
   List<GeocodingResult> _suggestions = [];

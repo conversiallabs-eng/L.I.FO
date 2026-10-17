@@ -81,7 +81,7 @@ class VectorStyleService {
 
       try {
         final docDir = await getApplicationDocumentsDirectory();
-        diskCacheFile = File('${docDir.path}/vector_style_${isDark ? "dark" : "light"}_v4.json');
+        diskCacheFile = File('${docDir.path}/vector_style_${isDark ? "dark" : "light"}_v6.json');
       } catch (_) {}
 
       // Tenta baixar da rede com timeout ágil
@@ -112,19 +112,25 @@ class VectorStyleService {
 
       final layers = rawLayers.cast<Map<String, dynamic>>();
 
-      // ─── PONTO 1: REMOVER PARADAS DE ÔNIBUS E ÍCONES DE TRANSPORTE (PRESERVANDO 100% DAS RUAS) ─
+      // ─── PONTO 1: REMOVER PARADAS DE ÔNIBUS E ÍCONES DE POI (PRESERVANDO 100% DAS RUAS E NOMES) ─
       layers.removeWhere((l) {
         final id = (l['id'] as String? ?? '').toLowerCase();
         final type = l['type'] as String? ?? '';
         final sourceLayer = (l['source-layer'] as String? ?? '').toLowerCase();
 
-        // NUNCA remover camadas de vias, rodovias ou nomes de ruas!
+        // NUNCA remover camadas de vias, rodovias, nomes de ruas ou setas de sentido!
         if (sourceLayer == 'transportation' || sourceLayer == 'transportation_name') {
           return false;
         }
 
-        // Remove especificamente o layer de POI de transporte público (ex: poi_transit com ícones de ônibus)
-        if (id == 'poi_transit' || id.contains('bus_stop')) {
+        // Remove paradas de ônibus, estações, transporte e todos os POIs poluentes (lojas, bancos, igrejas, etc)
+        // Isso deixa o mapa ultralimpo estilo Circuit/Waze focado apenas nas ruas e no motorista!
+        if (sourceLayer == 'poi' ||
+            id == 'poi_transit' ||
+            id.startsWith('poi_') ||
+            id.contains('transit') ||
+            id.contains('bus') ||
+            id.contains('stop')) {
           return true;
         }
 
@@ -208,8 +214,8 @@ class VectorStyleService {
         center: baseStyle.center,
         zoom: baseStyle.zoom,
       );
-    } catch (e) {
-      debugPrint('VectorStyleService: erro na customização do estilo ($e), usando baseStyle.');
+    } catch (e, st) {
+      debugPrint('VectorStyleService: ERRO CRÍTICO na customização do estilo: $e\n$st');
       return baseStyle;
     }
   }
