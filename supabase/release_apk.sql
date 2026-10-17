@@ -38,7 +38,7 @@ VALUES
   ('latest_version', '1.0.4',                                        now()),
   ('latest_build',   '16',                                           now()),
   ('apk_url',        'https://lifo.com.br/lifo.apk',                  now()),
-  ('release_notes',  '1. Cada entrega é uma parada sequencial independente (1 a 98 estilo Circuit).' || E'\n' ||
+  ('release_notes',  '1. Cada entrega é uma parada sequencial independente (1 parada por pacote/etiqueta estilo Circuit, sem limites).' || E'\n' ||
                      '2. Botões limpos com cores sólidas (Não entregue em vermelho, Entregue em verde).' || E'\n' ||
                      '3. Previsão da próxima parada com média móvel das últimas 3 entregas (/3).' || E'\n' ||
                      '4. Previsão de término da rota inteira com média acumulada de todas as entregas (/N).' || E'\n' ||
