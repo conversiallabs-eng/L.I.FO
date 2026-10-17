@@ -81,7 +81,7 @@ class VectorStyleService {
 
       try {
         final docDir = await getApplicationDocumentsDirectory();
-        diskCacheFile = File('${docDir.path}/vector_style_${isDark ? "dark" : "light"}.json');
+        diskCacheFile = File('${docDir.path}/vector_style_${isDark ? "dark" : "light"}_v4.json');
       } catch (_) {}
 
       // Tenta baixar da rede com timeout ágil
@@ -112,11 +112,23 @@ class VectorStyleService {
 
       final layers = rawLayers.cast<Map<String, dynamic>>();
 
-      // ─── PONTO 1: TIRAR O AZUL BORRADO DOS NOMES SOBRE A ÁGUA ─────────────
-      // Remove rótulos de cursos d'água, canais e rios que ficavam borrados em azul
+      // ─── PONTO 1: REMOVER PARADAS DE ÔNIBUS E ÍCONES DE TRANSPORTE (PRESERVANDO 100% DAS RUAS) ─
       layers.removeWhere((l) {
-        final id = l['id'] as String? ?? '';
+        final id = (l['id'] as String? ?? '').toLowerCase();
         final type = l['type'] as String? ?? '';
+        final sourceLayer = (l['source-layer'] as String? ?? '').toLowerCase();
+
+        // NUNCA remover camadas de vias, rodovias ou nomes de ruas!
+        if (sourceLayer == 'transportation' || sourceLayer == 'transportation_name') {
+          return false;
+        }
+
+        // Remove especificamente o layer de POI de transporte público (ex: poi_transit com ícones de ônibus)
+        if (id == 'poi_transit' || id.contains('bus_stop')) {
+          return true;
+        }
+
+        // Remove rótulos sobre água
         return (type == 'symbol' &&
             (id.contains('water') ||
                 id.contains('river') ||
@@ -124,28 +136,6 @@ class VectorStyleService {
                 id.contains('lake') ||
                 id.contains('stream')));
       });
-
-      // ─── PONTO 2: TIRAR O EMARANHADO DE RUAS QUANDO O ZOOM É PEQUENO ────────
-      // Só mostra vielas, garagens e ruazinhas residenciais de perto (zoom >= 12/13).
-      // De longe (zoom < 11), a visão da cidade/ilha fica limpa e minimalista igual ao app da Uber.
-      for (final l in layers) {
-        final id = l['id'] as String? ?? '';
-        if (id == 'road_minor' || id == 'road_minor_casing' || id == 'highway_minor') {
-          l['minzoom'] = 12;
-        } else if (id == 'road_service_track' || id == 'road_service_track_casing' || id == 'highway_path') {
-          l['minzoom'] = 13;
-        } else if (id == 'road_secondary_tertiary' ||
-            id == 'road_secondary_tertiary_casing' ||
-            id == 'highway_major_casing' ||
-            id == 'highway_major_inner') {
-          l['minzoom'] = 11;
-        } else if (id == 'road_link' ||
-            id == 'road_link_casing' ||
-            id == 'road_motorway_link' ||
-            id == 'road_motorway_link_casing') {
-          l['minzoom'] = 12;
-        }
-      }
 
       // ─── PONTO 3: ARRUMAR O 'PRETÃO' NO MODO ESCURO (ESTILO UBER/CIRCUIT DARK) ─
       // Troca o preto breu (#0c0c0c) por grafite carbono moderno (#181B22) e destaca as vias

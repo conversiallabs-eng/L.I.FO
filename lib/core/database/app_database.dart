@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:uuid/uuid.dart';
 import '../../features/route_manifest/domain/models/manifest_version.dart';
 import '../../features/route_manifest/domain/models/delivery_stop.dart';
 import '../../features/route_manifest/domain/models/package_item.dart';
@@ -29,9 +30,9 @@ class AppDatabase {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, 'lifo_logistics.db');
 
-    return await openDatabase(
+    final db = await openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: _onCreate,
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -85,8 +86,22 @@ class AppDatabase {
                 'ALTER TABLE manifest_versions ADD COLUMN road_computed_at TEXT');
           } catch (_) {}
         }
+        if (oldVersion < 8) {
+          try {
+            await db.execute(
+                'ALTER TABLE delivery_stops ADD COLUMN completed_at TEXT');
+          } catch (_) {}
+        }
       },
     );
+
+    // Garante que a coluna completed_at existe mesmo em bases já abertas
+    try {
+      await db.execute(
+          'ALTER TABLE delivery_stops ADD COLUMN completed_at TEXT');
+    } catch (_) {}
+
+    return db;
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -117,6 +132,7 @@ class AppDatabase {
         spatial_slot TEXT NOT NULL,
         time_window TEXT,
         notes TEXT,
+        completed_at TEXT,
         FOREIGN KEY (manifest_version_id) REFERENCES manifest_versions (id) ON DELETE CASCADE
       )
     ''');
@@ -330,6 +346,7 @@ class AppDatabase {
     );
 
     final List<DeliveryStop> stops = [];
+    bool hasMultiPackageStops = false;
     for (final sRow in stopRows) {
       final stopId = sRow['id'] as String;
       final List<Map<String, dynamic>> pkgRows = await db.query(
@@ -339,10 +356,106 @@ class AppDatabase {
       );
 
       final packages = pkgRows.map((p) => PackageItem.fromMap(p)).toList();
+      if (packages.length > 1) {
+        hasMultiPackageStops = true;
+      }
       stops.add(DeliveryStop.fromMap(sRow, packages: packages));
     }
 
-    return ManifestVersion.fromMap(versionMap, stops: stops);
+    // Auto-migração Circuit: se houver paradas multi-volume no SQLite,
+    // desmembra cada volume em sua própria parada independente (1 pacote = 1 parada de entrega)
+    if (hasMultiPackageStops) {
+      final List<DeliveryStop> circuitStops = [];
+      await db.transaction((txn) async {
+        await txn.delete('delivery_stops', where: 'manifest_version_id = ?', whereArgs: [versionId]);
+        int seq = 1;
+        for (final oldStop in stops) {
+          if (oldStop.packages.isEmpty) {
+            final newStop = oldStop.copyWith(sequenceIndex: seq);
+            await txn.insert('delivery_stops', {
+              'id': newStop.id,
+              'manifest_version_id': versionId,
+              'sequence_index': seq,
+              'recipient_name': newStop.recipientName,
+              'address': newStop.address,
+              'latitude': newStop.latitude,
+              'longitude': newStop.longitude,
+              'status': newStop.status.name,
+              'notes': newStop.notes,
+              'spatial_slot': newStop.spatialSlot.label,
+            });
+            circuitStops.add(newStop);
+            seq++;
+          } else {
+            for (final pkg in oldStop.packages) {
+              final newStopId = const Uuid().v4();
+              final isDelivered = pkg.status == PackageStatus.delivered;
+              final isFailed = pkg.status == PackageStatus.failed;
+              final stopStatus = isDelivered
+                  ? StopStatus.completed
+                  : (isFailed ? StopStatus.failed : oldStop.status);
+
+              final newStop = DeliveryStop(
+                id: newStopId,
+                manifestVersionId: versionId,
+                sequenceIndex: seq,
+                recipientName: oldStop.recipientName,
+                address: oldStop.address,
+                latitude: oldStop.latitude,
+                longitude: oldStop.longitude,
+                status: stopStatus,
+                notes: oldStop.notes,
+                spatialSlot: pkg.spatialSlot,
+                packages: [pkg.copyWith(stopId: newStopId)],
+              );
+
+              await txn.insert('delivery_stops', {
+                'id': newStopId,
+                'manifest_version_id': versionId,
+                'sequence_index': seq,
+                'recipient_name': newStop.recipientName,
+                'address': newStop.address,
+                'latitude': newStop.latitude,
+                'longitude': newStop.longitude,
+                'status': newStop.status.name,
+                'notes': newStop.notes,
+                'spatial_slot': newStop.spatialSlot.label,
+              });
+
+              await txn.update(
+                'package_items',
+                {'stop_id': newStopId},
+                where: 'id = ?',
+                whereArgs: [pkg.id],
+              );
+
+              circuitStops.add(newStop);
+              seq++;
+            }
+          }
+        }
+
+        await txn.update(
+          'manifest_versions',
+          {
+            'total_stops': circuitStops.length,
+            'total_packages': circuitStops.length,
+          },
+          where: 'id = ?',
+          whereArgs: [versionId],
+        );
+      });
+
+      stops.clear();
+      stops.addAll(circuitStops);
+    }
+
+    final totalPkgs = stops.fold(0, (acc, s) => acc + s.packages.length);
+
+    return ManifestVersion.fromMap(versionMap, stops: stops).copyWith(
+      totalStops: stops.length,
+      totalPackages: totalPkgs,
+    );
   }
 
   // Reverts active manifest to a specific version without deleting history
@@ -534,12 +647,62 @@ class AppDatabase {
   // Updates delivery stop status (e.g. completed, in transit)
   Future<void> updateStopStatus(String stopId, StopStatus status) async {
     final db = await database;
+    final isDone = status == StopStatus.completed || status == StopStatus.failed;
+    final updateData = <String, dynamic>{
+      'status': status.name,
+      'completed_at': isDone ? DateTime.now().toIso8601String() : null,
+    };
     await db.update(
       'delivery_stops',
-      {'status': status.name},
+      updateData,
       where: 'id = ?',
       whereArgs: [stopId],
     );
+
+    // Sincroniza pacotes da parada
+    final pkgStatus = status == StopStatus.completed
+        ? PackageStatus.delivered.name
+        : (status == StopStatus.failed
+            ? PackageStatus.failed.name
+            : PackageStatus.loaded.name);
+    await db.update(
+      'package_items',
+      {'status': pkgStatus},
+      where: 'stop_id = ?',
+      whereArgs: [stopId],
+    );
+  }
+
+  // Updates individual package status
+  Future<void> updatePackageStatus(String packageId, PackageStatus status) async {
+    final db = await database;
+    await db.update(
+      'package_items',
+      {'status': status.name},
+      where: 'id = ?',
+      whereArgs: [packageId],
+    );
+
+    // Sincroniza a parada vinculada
+    final pkgRows = await db.query(
+      'package_items',
+      columns: ['stop_id'],
+      where: 'id = ?',
+      whereArgs: [packageId],
+      limit: 1,
+    );
+    if (pkgRows.isNotEmpty) {
+      final stopId = pkgRows.first['stop_id'] as String;
+      final stopStatus = status == PackageStatus.delivered
+          ? StopStatus.completed.name
+          : (status == PackageStatus.failed ? StopStatus.failed.name : StopStatus.pending.name);
+      await db.update(
+        'delivery_stops',
+        {'status': stopStatus},
+        where: 'id = ?',
+        whereArgs: [stopId],
+      );
+    }
   }
 
   // Updates delivery stop address and optional coordinates

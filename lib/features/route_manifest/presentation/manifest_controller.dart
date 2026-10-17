@@ -572,7 +572,22 @@ class ManifestNotifier extends StateNotifier<ManifestState> {
     // 1. Atualização otimista IMEDIATA (a tela reage instantaneamente sem esperar banco ou rede)
     final updatedStops = curVer.stops.map((s) {
       if (s.id == stopId) {
-        return s.copyWith(status: newStatus);
+        final updatedPkgs = s.packages.map((p) {
+          if (newStatus == StopStatus.completed) {
+            return p.copyWith(status: PackageStatus.delivered);
+          } else if (newStatus == StopStatus.failed) {
+            return p.copyWith(status: PackageStatus.failed);
+          } else {
+            return p.copyWith(status: PackageStatus.loaded);
+          }
+        }).toList();
+        final isDone = newStatus == StopStatus.completed || newStatus == StopStatus.failed;
+        return s.copyWith(
+          status: newStatus,
+          packages: updatedPkgs,
+          completedAt: isDone ? DateTime.now() : null,
+          clearCompletedAt: !isDone,
+        );
       }
       return s;
     }).toList();
@@ -618,6 +633,62 @@ class ManifestNotifier extends StateNotifier<ManifestState> {
       currentVersion: dbVersion,
       roadPolyline: newPolyline,
     );
+  }
+
+  Future<void> updatePackageStatus({
+    required String packageId,
+    required String stopId,
+    required PackageStatus newStatus,
+  }) async {
+    final curVer = state.currentVersion;
+    if (curVer == null) return;
+
+    StopStatus? derivedStopStatus;
+    final updatedStops = curVer.stops.map((s) {
+      if (s.id == stopId) {
+        final updatedPkgs = s.packages.map((p) {
+          if (p.id == packageId) {
+            return p.copyWith(status: newStatus);
+          }
+          return p;
+        }).toList();
+
+        final allDone = updatedPkgs.isNotEmpty &&
+            updatedPkgs.every((p) =>
+                p.status == PackageStatus.delivered ||
+                p.status == PackageStatus.failed);
+
+        StopStatus nextStopStatus = s.status;
+        if (allDone) {
+          final allFailed =
+              updatedPkgs.every((p) => p.status == PackageStatus.failed);
+          nextStopStatus = allFailed ? StopStatus.failed : StopStatus.completed;
+        } else {
+          if (s.status == StopStatus.completed || s.status == StopStatus.failed) {
+            nextStopStatus = StopStatus.inTransit;
+          }
+        }
+        derivedStopStatus = nextStopStatus;
+
+        return s.copyWith(
+          status: nextStopStatus,
+          packages: updatedPkgs,
+        );
+      }
+      return s;
+    }).toList();
+
+    final optimisticVersion = curVer.copyWith(stops: updatedStops);
+    state = state.copyWith(currentVersion: optimisticVersion);
+
+    await _repository.updatePackageStatus(packageId, newStatus);
+    if (derivedStopStatus != null) {
+      await _repository.updateStopStatus(stopId, derivedStopStatus!);
+    }
+
+    final dbVersion =
+        await _repository.getOrInitCurrentManifest() ?? optimisticVersion;
+    state = state.copyWith(currentVersion: dbVersion);
   }
 
   Future<bool> editStopAddressAndReoptimize({

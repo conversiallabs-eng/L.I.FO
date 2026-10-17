@@ -185,34 +185,55 @@ class ManifestRepository {
 
     final baseStops = <DeliveryStop>[];
     for (final s in stops) {
-      final stopId = _uuid.v4();
-      baseStops.add(
-        DeliveryStop(
-          id: stopId,
-          manifestVersionId: current?.id ?? 'pending',
-          sequenceIndex: baseStops.length + 1,
-          recipientName: s.recipient,
-          address: s.address,
-          latitude: s.latitude,
-          longitude: s.longitude,
-          status: StopStatus.pending,
-          notes: s.notes,
-          spatialSlot: SpatialSlot.portaTraseira,
-          packages: [
-            for (final p in s.items)
-              PackageItem(
-                id: _uuid.v4(),
-                manifestVersionId: current?.id ?? 'pending',
-                stopId: stopId,
-                barcode: p.barcode,
-                description: p.description,
-                weightKg: p.weightKg,
-                spatialSlot: SpatialSlot.portaTraseira,
-                status: PackageStatus.pendingLoad,
-              ),
-          ],
-        ),
-      );
+      if (s.items.isEmpty) {
+        final stopId = _uuid.v4();
+        baseStops.add(
+          DeliveryStop(
+            id: stopId,
+            manifestVersionId: current?.id ?? 'pending',
+            sequenceIndex: baseStops.length + 1,
+            recipientName: s.recipient,
+            address: s.address,
+            latitude: s.latitude,
+            longitude: s.longitude,
+            status: StopStatus.pending,
+            notes: s.notes,
+            spatialSlot: SpatialSlot.portaTraseira,
+            packages: const [],
+          ),
+        );
+      } else {
+        // Padrão Circuit: cada pacote/volume é uma parada individual (1 pacote = 1 parada de entrega)
+        for (final p in s.items) {
+          final stopId = _uuid.v4();
+          baseStops.add(
+            DeliveryStop(
+              id: stopId,
+              manifestVersionId: current?.id ?? 'pending',
+              sequenceIndex: baseStops.length + 1,
+              recipientName: s.recipient,
+              address: s.address,
+              latitude: s.latitude,
+              longitude: s.longitude,
+              status: StopStatus.pending,
+              notes: s.notes,
+              spatialSlot: SpatialSlot.portaTraseira,
+              packages: [
+                PackageItem(
+                  id: _uuid.v4(),
+                  manifestVersionId: current?.id ?? 'pending',
+                  stopId: stopId,
+                  barcode: p.barcode,
+                  description: p.description,
+                  weightKg: p.weightKg,
+                  spatialSlot: SpatialSlot.portaTraseira,
+                  status: PackageStatus.pendingLoad,
+                ),
+              ],
+            ),
+          );
+        }
+      }
     }
 
     final baseLabel = formatName.trim().isEmpty ? 'Manifesto' : formatName.trim();
@@ -549,6 +570,10 @@ class ManifestRepository {
 
   Future<void> updateStopStatus(String stopId, StopStatus status) async {
     await _db.updateStopStatus(stopId, status);
+  }
+
+  Future<void> updatePackageStatus(String packageId, PackageStatus status) async {
+    await _db.updatePackageStatus(packageId, status);
   }
 
   /// Atribui um pacote (barcode) a um compartimento do baú, marcando como

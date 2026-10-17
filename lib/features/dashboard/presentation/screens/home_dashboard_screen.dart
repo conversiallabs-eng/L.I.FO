@@ -141,6 +141,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   bool _isSatelliteLayer = false;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
   LatLng? _currentLocation;
+  DateTime? _routeStartedAt;
 
   // ── GPS granular (Fase 1a perf): o stream atualiza estes notifiers a
   // cada fix SEM setState na tela. Só pin do mapa, HUD e pílula de
@@ -213,6 +214,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         if (!mounted) return;
         setState(() {
           _selectedStopIndex = nextIdx;
+          _activePackageIndex = 0;
           _cardDragDx = screenW;
           _scannedStop = null;
           _scannedBarcode = null;
@@ -245,6 +247,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         if (!mounted) return;
         setState(() {
           _selectedStopIndex = prevIdx;
+          _activePackageIndex = 0;
           _cardDragDx = -screenW;
           _scannedStop = null;
           _scannedBarcode = null;
@@ -477,9 +480,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   String? _verifiedStopId;
   _QrCheck _verifyResult = _QrCheck.none;
   double _verifyDistanceM = 0;
-  int _verifiedOtherSeq = 0;
   DeliveryStop? _scannedStop;
   String? _scannedBarcode;
+  int _activePackageIndex = 0;
+  String? _activePackageStopId;
 
   Future<void> _startHomeCoach({bool force = false}) async {
     if (!mounted) return;
@@ -1201,7 +1205,6 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
 
     _QrCheck result;
     double dist = 0;
-    int otherSeq = 0;
     DeliveryStop? ownerStop;
 
     if (ownCodes.contains(norm)) {
@@ -1228,7 +1231,6 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
         return;
       }
       if (ownerStop != null) {
-        otherSeq = ownerStop.sequenceIndex;
         final gps = _currentLocation ?? _livePin.value;
         if (gps != null) {
           dist = LifoCalculator.calculateDistanceMeters(
@@ -1253,15 +1255,19 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       _verifiedStopId = ownerStop?.id ?? current.id;
       _verifyResult = result;
       _verifyDistanceM = dist;
-      _verifiedOtherSeq = otherSeq;
       _scannedStop = ownerStop;
       _scannedBarcode = norm;
       
       // Se encontrou a parada (mesmo que seja outra), "chama" o card dela
-      if (ownerStop != null) {
-        final idx = stops.indexWhere((s) => s.id == ownerStop!.id);
+      final target = ownerStop;
+      if (target != null) {
+        final idx = stops.indexWhere((s) => s.id == target.id);
         if (idx != -1) {
           _selectedStopIndex = idx;
+        }
+        final pkgIdx = target.packages.indexWhere((p) => p.barcode.trim().toUpperCase() == norm);
+        if (pkgIdx != -1) {
+          _activePackageIndex = pkgIdx;
         }
       }
     });
@@ -2099,6 +2105,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
 
 
   void _startInAppNavigation(DeliveryStop stop, {bool forceFollow = false}) {
+    _routeStartedAt ??= DateTime.now();
     _fetchRouteToTargetStop(stop);
     _showManeuverHud();
     // A voz abre junto com a rota (não espera a 1ª manobra chegar a 300 m).
@@ -2188,6 +2195,27 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     final DeliveryStop? targetStop = (stops.isNotEmpty && curIdx < stops.length) 
         ? stops[curIdx] 
         : null;
+
+    if (targetStop != null && _activePackageStopId != targetStop.id) {
+      _activePackageStopId = targetStop.id;
+      final firstPending = targetStop.packages.indexWhere((p) =>
+          p.status != PackageStatus.delivered && p.status != PackageStatus.failed);
+      _activePackageIndex = firstPending != -1 ? firstPending : 0;
+    }
+
+    int totalGlobalPkgs = 0;
+    int currentGlobalPkgIndex = 0;
+    for (int i = 0; i < stops.length; i++) {
+      final s = stops[i];
+      final count = s.packages.isEmpty ? 1 : s.packages.length;
+      if (i < curIdx) {
+        currentGlobalPkgIndex += count;
+      } else if (i == curIdx) {
+        currentGlobalPkgIndex += _activePackageIndex.clamp(0, count - 1);
+      }
+      totalGlobalPkgs += count;
+    }
+    if (totalGlobalPkgs == 0) totalGlobalPkgs = stops.length;
 
     if (_isNavigating && stops.isEmpty) {
       // Proteção contra erro de renderização se o estado de navegação estiver ativo mas a lista vazia
@@ -2555,42 +2583,59 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                           );
                         },
                         child: _buildActiveNavigationCard(
-                          key: ValueKey('active_card_${targetStop?.id ?? "none"}'),
+                          key: ValueKey('active_card_${targetStop?.id ?? "none"}_pkg_$_activePackageIndex'),
                           isDark: isDark,
                           isSidePanel: false,
                           stop: targetStop!, // Já garantido pelo 'if' do Positioned
-                          currentIndex: curIdx,
-                          totalStops: stops.length,
-                          timeLabel: _stopTimeLabel(
-                            index: curIdx,
-                            stop: targetStop!,
-                            arrivalOffsets: manifestState.arrivalOffsets,
-                            routeComputedAt: manifestState.routeComputedAt,
-                            isOnlineRouting: manifestState.isOnlineRouting,
-                          ),
-                          onMarkFailed: () {
-                            if (stops.isEmpty || curIdx >= stops.length) return;
-                            final isCurrentlyFailed = targetStop!.status == StopStatus.failed;
-                            final newStatus = isCurrentlyFailed ? StopStatus.pending : StopStatus.failed;
-                            ref.read(manifestControllerProvider.notifier).updateStopStatus(
-                              targetStop.id,
-                              newStatus,
+                          currentIndex: currentGlobalPkgIndex,
+                          totalStops: totalGlobalPkgs,
+                          timeLabel: () {
+                            final navEta = _computeEtaEstimates(stops);
+                            return _stopTimeLabel(
+                              index: curIdx,
+                              stop: targetStop,
+                              nextPendingIndex: navEta.nextIdx,
+                              totalStops: stops.length,
+                              nextEta: navEta.nextEta,
+                              lastEta: navEta.lastEta,
+                              arrivalOffsets: manifestState.arrivalOffsets,
+                              routeComputedAt: manifestState.routeComputedAt,
+                              isOnlineRouting: manifestState.isOnlineRouting,
                             );
-                            if (!isCurrentlyFailed) {
-                              _advanceToNextStop(stops);
-                            }
-                          },
-                          onMarkCompleted: () {
+                          }(),
+                          activePackageIndex: _activePackageIndex,
+                          onSelectPackage: (idx) => setState(() => _activePackageIndex = idx),
+                          onUpdatePackageStatus: (pkg, newStatus) async {
                             if (stops.isEmpty || curIdx >= stops.length) return;
-                            final isCurrentlyCompleted = targetStop!.status == StopStatus.completed;
-                            final newStatus = isCurrentlyCompleted ? StopStatus.pending : StopStatus.completed;
-                            ref.read(manifestControllerProvider.notifier).updateStopStatus(
-                              targetStop.id,
-                              newStatus,
+                            final currentTargetStop = targetStop;
+                            await ref.read(manifestControllerProvider.notifier).updatePackageStatus(
+                              packageId: pkg.id,
+                              stopId: currentTargetStop.id,
+                              newStatus: newStatus,
                             );
-                            if (!isCurrentlyCompleted) {
-                              final allDone = stops.every((s) => s.id == targetStop.id || s.status == StopStatus.completed);
-                              if (allDone) {
+
+                            HapticFeedback.mediumImpact();
+                            SystemSound.play(SystemSoundType.click);
+
+                            final updatedVersion = ref.read(manifestControllerProvider).currentVersion;
+                            final updatedStops = updatedVersion?.stops ?? stops;
+                            final freshTargetStop = updatedStops.firstWhere(
+                              (s) => s.id == currentTargetStop.id,
+                              orElse: () => currentTargetStop,
+                            );
+
+                            final allPkgsDone = freshTargetStop.packages.isNotEmpty &&
+                                freshTargetStop.packages.every((p) =>
+                                    p.status == PackageStatus.delivered ||
+                                    p.status == PackageStatus.failed);
+
+                            if (allPkgsDone) {
+                              final allStopsDone = updatedStops.every((s) =>
+                                  s.id == freshTargetStop.id ||
+                                  s.status == StopStatus.completed ||
+                                  s.status == StopStatus.failed);
+
+                              if (allStopsDone) {
                                 _autoRecenteringTimer?.cancel();
                                 _autoRecenteringTimer = null;
                                 _hudHideTimer?.cancel();
@@ -2606,24 +2651,119 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                                   _verifyResult = _QrCheck.none;
                                 });
                                 _animatedMapMove(_mapController.camera.center, _mapController.camera.zoom, destRotation: 0, durationMs: 400);
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('TODAS AS PARADAS FINALIZADAS!'),
+                                    duration: Duration(seconds: 2),
+                                    backgroundColor: Color(0xFF16A34A),
+                                  ),
+                                );
                               } else {
-                                _advanceToNextStop(stops);
+                                _advanceToNextStop(updatedStops);
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Parada #${freshTargetStop.sequenceIndex} finalizada! Avançando para a próxima...'),
+                                    duration: const Duration(seconds: 2),
+                                    backgroundColor: const Color(0xFF16A34A),
+                                  ),
+                                );
                               }
-                              ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(allDone
-                                      ? 'TODAS AS PARADAS ENTREGUES!'
-                                      : 'Parada #${targetStop.sequenceIndex} ENTREGUE! Avançando para a próxima...'),
-                                  duration: const Duration(seconds: 2),
-                                  backgroundColor: const Color(0xFF16A34A),
-                                ),
-                              );
+                            } else {
+                              final nextPending = freshTargetStop.packages.indexWhere((p) =>
+                                  p.status != PackageStatus.delivered &&
+                                  p.status != PackageStatus.failed);
+                              if (nextPending != -1) {
+                                setState(() {
+                                  _activePackageIndex = nextPending;
+                                });
+                              }
                             }
+                          },
+                          onMarkFailed: () {
+                            if (stops.isEmpty || curIdx >= stops.length) return;
+                            ref.read(manifestControllerProvider.notifier).updateStopStatus(
+                              targetStop.id,
+                              StopStatus.failed,
+                            );
+                            HapticFeedback.heavyImpact();
+                            SystemSound.play(SystemSoundType.click);
+
+                            final allDone = stops.every((s) => s.id == targetStop.id || s.status == StopStatus.completed || s.status == StopStatus.failed);
+                            if (allDone) {
+                              _autoRecenteringTimer?.cancel();
+                              _autoRecenteringTimer = null;
+                              _hudHideTimer?.cancel();
+                              VoiceGuidance.instance.stop();
+                              setState(() {
+                                _isNavigating = false;
+                                _autoRecenterArmed = false;
+                                _courseUp = false;
+                                _hudVisible = false;
+                                _cardDragDx = 0.0;
+                                _scannedStop = null;
+                                _scannedBarcode = null;
+                                _verifyResult = _QrCheck.none;
+                              });
+                              _animatedMapMove(_mapController.camera.center, _mapController.camera.zoom, destRotation: 0, durationMs: 400);
+                            } else {
+                              _advanceToNextStop(stops);
+                            }
+                            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Entrega #${targetStop.sequenceIndex} marcada como NÃO ENTREGUE.'),
+                                duration: const Duration(seconds: 2),
+                                backgroundColor: const Color(0xFFDC2626),
+                              ),
+                            );
+                          },
+                          onMarkCompleted: () {
+                            if (stops.isEmpty || curIdx >= stops.length) return;
+                            ref.read(manifestControllerProvider.notifier).updateStopStatus(
+                              targetStop.id,
+                              StopStatus.completed,
+                            );
+                            HapticFeedback.heavyImpact();
+                            SystemSound.play(SystemSoundType.click);
+
+                            final allDone = stops.every((s) => s.id == targetStop.id || s.status == StopStatus.completed || s.status == StopStatus.failed);
+                            if (allDone) {
+                              _autoRecenteringTimer?.cancel();
+                              _autoRecenteringTimer = null;
+                              _hudHideTimer?.cancel();
+                              VoiceGuidance.instance.stop();
+                              setState(() {
+                                _isNavigating = false;
+                                _autoRecenterArmed = false;
+                                _courseUp = false;
+                                _hudVisible = false;
+                                _cardDragDx = 0.0;
+                                _scannedStop = null;
+                                _scannedBarcode = null;
+                                _verifyResult = _QrCheck.none;
+                              });
+                              _animatedMapMove(_mapController.camera.center, _mapController.camera.zoom, destRotation: 0, durationMs: 400);
+                            } else {
+                              _advanceToNextStop(stops);
+                            }
+                            ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(allDone
+                                    ? 'TODAS AS ENTREGAS FINALIZADAS!'
+                                    : 'Entrega #${targetStop.sequenceIndex} ENTREGUE! Avançando para a próxima...'),
+                                duration: const Duration(seconds: 2),
+                                backgroundColor: const Color(0xFF16A34A),
+                              ),
+                            );
                           },
                           onUndo: () {
                             if (stops.isEmpty || curIdx >= stops.length) return;
-                            final curStop = targetStop!;
+                            final curStop = targetStop;
                             ref.read(manifestControllerProvider.notifier).updateStopStatus(
                               curStop.id,
                               StopStatus.pending,
@@ -3153,17 +3293,23 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
       );
     }
 
+    final etaEstimates = _computeEtaEstimates(stops);
+    final nextEta = etaEstimates.nextEta;
+    final lastEta = etaEstimates.lastEta;
+    final nextIdx = etaEstimates.nextIdx;
+
     final bool hasRealEta =
         isOnlineRouting && totalDurationSeconds > 0 && routeComputedAt != null;
     final bool hasStoredRoad =
         totalDistanceMeters > 0 && hasRoadPolyline;
-    final String etaLine = hasRealEta
-        ? 'Chegada ≈ ${_hhmmFormat.format(routeComputedAt.add(Duration(seconds: totalDurationSeconds.round())))} • $totalStops paradas$weightSuffix'
-        : hasStoredRoad
-            ? '$totalStops paradas$weightSuffix • ${(totalDistanceMeters / 1000).toStringAsFixed(1)} km de rua'
-            : '$totalStops paradas$weightSuffix • aguardando conexão';
+    final String etaLine = (lastEta != null && lastEta.isNotEmpty && lastEta != '--')
+        ? 'Chegada ≈ $lastEta • $totalStops paradas$weightSuffix'
+        : (hasRealEta
+            ? 'Chegada ≈ ${_hhmmFormat.format(routeComputedAt.add(Duration(seconds: totalDurationSeconds.round())))} • $totalStops paradas$weightSuffix'
+            : (hasStoredRoad
+                ? '$totalStops paradas$weightSuffix • ${(totalDistanceMeters / 1000).toStringAsFixed(1)} km de rua'
+                : '$totalStops paradas$weightSuffix • aguardando conexão'));
 
-    final nextIdx = _nextPendingIndex(stops);
     final isRouteInProgress = stops.any((s) => s.status == StopStatus.completed || s.status == StopStatus.inTransit);
     final allCompleted = stops.isNotEmpty && stops.every((s) => s.status == StopStatus.completed);
 
@@ -3177,6 +3323,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     // grande de largura toda) quanto no compacto de paisagem (botão embutido
     // na linha de resumo).
     void startRoute() {
+      _routeStartedAt ??= DateTime.now();
       if (allCompleted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -3831,6 +3978,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                     timeLabel: _stopTimeLabel(
                       index: i,
                       stop: stops[i],
+                      nextPendingIndex: nextIdx,
+                      totalStops: stops.length,
+                      nextEta: nextEta,
+                      lastEta: lastEta,
                       arrivalOffsets: arrivalOffsets,
                       routeComputedAt: routeComputedAt,
                       isOnlineRouting: isOnlineRouting,
@@ -3933,21 +4084,109 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
   // Fase 2b perf: construir DateFormat parseia o padrão (ICU) — 1x só.
   static final _hhmmFormat = DateFormat('HH:mm');
 
+  /// Calcula as previsões de chegada em tempo real:
+  /// - Próxima parada ativa: Média móvel das últimas 3 concluídas (/3)
+  /// - Última parada da rota: Média acumulada de todas as concluídas (/N)
+  ({String? nextEta, String? lastEta, int nextIdx}) _computeEtaEstimates(List<DeliveryStop> stops) {
+    if (stops.isEmpty) {
+      return (nextEta: null, lastEta: null, nextIdx: 0);
+    }
+
+    final nextIdx = _nextPendingIndex(stops);
+    final completedStops = stops
+        .where((s) =>
+            (s.status == StopStatus.completed || s.status == StopStatus.failed) &&
+            s.completedAt != null)
+        .toList();
+
+    completedStops.sort((a, b) => a.completedAt!.compareTo(b.completedAt!));
+
+    final intervals = <double>[];
+
+    // Se temos referência de início da rota e a 1ª parada foi finalizada após o início:
+    if (completedStops.isNotEmpty) {
+      final firstCompleted = completedStops.first;
+      final refStart = _routeStartedAt;
+      if (refStart != null && firstCompleted.completedAt!.isAfter(refStart)) {
+        final firstDiff = firstCompleted.completedAt!.difference(refStart).inSeconds.toDouble();
+        if (firstDiff >= 10 && firstDiff <= 7200) {
+          intervals.add(firstDiff);
+        }
+      }
+    }
+
+    // Intervalos entre paradas consecutivas concluídas:
+    for (int i = 1; i < completedStops.length; i++) {
+      final diff = completedStops[i].completedAt!.difference(completedStops[i - 1].completedAt!).inSeconds.toDouble();
+      if (diff > 0) {
+        intervals.add(diff);
+      }
+    }
+
+    // 1. Média Móvel das Últimas 3 para a PRÓXIMA parada:
+    String? nextEta;
+    if (intervals.isEmpty) {
+      nextEta = '--';
+    } else {
+      final count = intervals.length.clamp(1, 3);
+      final lastSlice = intervals.sublist(intervals.length - count);
+      final movingAvgSec = lastSlice.reduce((a, b) => a + b) / count;
+      final eta = DateTime.now().add(Duration(seconds: movingAvgSec.round()));
+      nextEta = _hhmmFormat.format(eta);
+    }
+
+    // 2. Média Acumulada de todas (/N) para o FINAL da rota:
+    String? lastEta;
+    final remainingCount = stops.where((s) => s.status != StopStatus.completed && s.status != StopStatus.failed).length;
+    if (remainingCount == 0) {
+      lastEta = null; // Rota totalmente concluída
+    } else if (intervals.isNotEmpty) {
+      final cumulativeAvgSec = intervals.reduce((a, b) => a + b) / intervals.length;
+      final totalRemainingSec = remainingCount * cumulativeAvgSec;
+      final etaEnd = DateTime.now().add(Duration(seconds: totalRemainingSec.round()));
+      lastEta = _hhmmFormat.format(etaEnd);
+    }
+
+    return (nextEta: nextEta, lastEta: lastEta, nextIdx: nextIdx);
+  }
+
   String _stopTimeLabel({
     required int index,
     required DeliveryStop stop,
+    required int nextPendingIndex,
+    required int totalStops,
+    required String? nextEta,
+    required String? lastEta,
     required List<double> arrivalOffsets,
     required DateTime? routeComputedAt,
     required bool isOnlineRouting,
   }) {
-    if (isOnlineRouting &&
-        routeComputedAt != null &&
-        arrivalOffsets.length > index) {
-      final eta = routeComputedAt
-          .add(Duration(seconds: arrivalOffsets[index].round()));
-      return _hhmmFormat.format(eta);
+    // 1. Paradas já finalizadas: mostra a hora real em que foi entregue
+    if (stop.status == StopStatus.completed || stop.status == StopStatus.failed) {
+      if (stop.completedAt != null) {
+        return _hhmmFormat.format(stop.completedAt!);
+      }
+      return '';
     }
-    return '#${stop.sequenceIndex}';
+
+    // 2. Próxima parada (ativa): mostra o horário com média móvel das últimas 3
+    if (index == nextPendingIndex) {
+      return nextEta ?? '--';
+    }
+
+    // 3. Última parada da rota: mostra o horário com média acumulada /N
+    if (index == totalStops - 1) {
+      if (lastEta != null && lastEta.isNotEmpty) {
+        return lastEta;
+      }
+      if (isOnlineRouting && routeComputedAt != null && arrivalOffsets.length > index) {
+        return _hhmmFormat.format(routeComputedAt.add(Duration(seconds: arrivalOffsets[index].round())));
+      }
+      return '--';
+    }
+
+    // 4. Cards futuros intermediários: em branco (limpo, sem poluição)
+    return '';
   }
 
 
@@ -4120,59 +4359,65 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                       style: TextStyle(color: subColor, fontSize: 12),
                     ),
                     _buildStopLocationChip(isDark: isDark, stop: stop),
-                    // Badge de código de rastreio
+                    // Badges de código de rastreio: um por volume, um embaixo do outro
                     Builder(builder: (context) {
                       final barcodes = stop.packages
                           .map((p) => p.barcode.trim())
                           .where((b) => b.isNotEmpty)
                           .toList();
                       if (barcodes.isEmpty) return const SizedBox.shrink();
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 5),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: isDark ? AppColors.carbonSurfaceInput : AppColors.lightSurfaceInput,
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                              color: isDark ? AppColors.carbonBorder : AppColors.lightBorder,
-                              width: 1,
-                            ),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(
-                                Icons.qr_code_2_rounded,
-                                size: 13,
-                                color: isDark ? const Color(0xFF60A5FA) : const Color(0xFF2563EB),
-                              ),
-                              const SizedBox(width: 5),
-                              Text(
-                                'RASTREIO: ',
-                                style: TextStyle(
-                                  fontSize: 9.5,
-                                  fontWeight: FontWeight.w900,
-                                  color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
-                                  letterSpacing: 0.4,
-                                ),
-                              ),
-                              Flexible(
-                                child: Text(
-                                  barcodes.join(' • '),
-                                  style: TextStyle(
-                                    fontSize: 10.5,
-                                    fontWeight: FontWeight.w700,
-                                    fontFamily: 'monospace',
-                                    color: isDark ? Colors.white : const Color(0xFF0F172A),
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          for (final code in barcodes)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 5),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: isDark ? AppColors.carbonSurfaceInput : AppColors.lightSurfaceInput,
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: isDark ? AppColors.carbonBorder : AppColors.lightBorder,
+                                    width: 1,
                                   ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.qr_code_2_rounded,
+                                      size: 13,
+                                      color: isDark ? const Color(0xFF60A5FA) : const Color(0xFF2563EB),
+                                    ),
+                                    const SizedBox(width: 5),
+                                    Text(
+                                      'RASTREIO: ',
+                                      style: TextStyle(
+                                        fontSize: 9.5,
+                                        fontWeight: FontWeight.w900,
+                                        color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B),
+                                        letterSpacing: 0.4,
+                                      ),
+                                    ),
+                                    Flexible(
+                                      child: Text(
+                                        code,
+                                        style: TextStyle(
+                                          fontSize: 10.5,
+                                          fontWeight: FontWeight.w700,
+                                          fontFamily: 'monospace',
+                                          color: isDark ? Colors.white : const Color(0xFF0F172A),
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                            ],
-                          ),
-                        ),
+                            ),
+                        ],
                       );
                     }),
                     if (notes != null && notes.isNotEmpty) ...[
@@ -4457,6 +4702,155 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     );
   }
 
+  Widget _buildVolumeSelector({
+    required bool isDark,
+    required List<PackageItem> packages,
+    required int activeIndex,
+    required ValueChanged<int> onSelect,
+  }) {
+    final total = packages.length;
+    return Container(
+      margin: const EdgeInsets.only(top: 6, bottom: 2),
+      child: Row(
+        children: [
+          // Seta anterior
+          InkWell(
+            onTap: activeIndex > 0 ? () => onSelect(activeIndex - 1) : null,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: (isDark ? Colors.white : Colors.black).withValues(alpha: activeIndex > 0 ? 0.08 : 0.02),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.chevron_left_rounded,
+                size: 18,
+                color: activeIndex > 0
+                    ? (isDark ? AppColors.textWhite : AppColors.lightTextPrimary)
+                    : (isDark ? Colors.white24 : Colors.black26),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          // Chips roláveis de volumes
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (int i = 0; i < total; i++) ...[
+                    if (i > 0) const SizedBox(width: 5),
+                    _buildVolumeChip(
+                      isDark: isDark,
+                      package: packages[i],
+                      index: i,
+                      total: total,
+                      isSelected: i == activeIndex,
+                      onTap: () => onSelect(i),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          // Seta próxima
+          InkWell(
+            onTap: activeIndex < total - 1 ? () => onSelect(activeIndex + 1) : null,
+            borderRadius: BorderRadius.circular(16),
+            child: Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: (isDark ? Colors.white : Colors.black).withValues(alpha: activeIndex < total - 1 ? 0.08 : 0.02),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.chevron_right_rounded,
+                size: 18,
+                color: activeIndex < total - 1
+                    ? (isDark ? AppColors.textWhite : AppColors.lightTextPrimary)
+                    : (isDark ? Colors.white24 : Colors.black26),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVolumeChip({
+    required bool isDark,
+    required PackageItem package,
+    required int index,
+    required int total,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    final isDelivered = package.status == PackageStatus.delivered;
+    final isFailed = package.status == PackageStatus.failed;
+
+    Color chipBg;
+    Color chipBorder;
+    Color chipText;
+
+    if (isSelected) {
+      chipBg = const Color(0xFF2563EB);
+      chipBorder = const Color(0xFF2563EB);
+      chipText = Colors.white;
+    } else if (isDelivered) {
+      chipBg = const Color(0xFF16A34A);
+      chipBorder = const Color(0xFF16A34A);
+      chipText = Colors.white;
+    } else if (isFailed) {
+      chipBg = const Color(0xFFDC2626);
+      chipBorder = const Color(0xFFDC2626);
+      chipText = Colors.white;
+    } else {
+      chipBg = isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
+      chipBorder = chipBg;
+      chipText = isDark ? Colors.white : const Color(0xFF0F172A);
+    }
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(6),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: chipBg,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: chipBorder,
+            width: 1.0,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (isDelivered) ...[
+              const Icon(Icons.check_circle_rounded, size: 12, color: Colors.white),
+              const SizedBox(width: 3),
+            ] else if (isFailed) ...[
+              const Icon(Icons.cancel_rounded, size: 12, color: Colors.white),
+              const SizedBox(width: 3),
+            ],
+            Text(
+              'VOL ${index + 1}/$total',
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
+                color: chipText,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildNavigationCardDetails({
     required bool isDark,
     required bool isSidePanel,
@@ -4465,25 +4859,174 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     required Color subColor,
     required Color cardBorder,
     required String? notes,
+    required int activePackageIndex,
+    required ValueChanged<int> onSelectPackage,
     VoidCallback? onTapTracking,
+    void Function(PackageItem pkg, PackageStatus status)? onUpdatePackageStatus,
   }) {
-    final barcodes = stop.packages
-        .map((p) => p.barcode.trim())
-        .where((b) => b.isNotEmpty)
-        .toList();
-    
-    // Prioriza o código bipado no momento para exibição no card (mesmo que seja da parada atual)
-    String trackingLabel;
-    final isScannedCurrent = _scannedBarcode != null && _verifiedStopId == stop.id && (_verifyResult == _QrCheck.ok || _verifyResult == _QrCheck.far || _verifyResult == _QrCheck.noGps);
-    final isScannedOther = _scannedBarcode != null && _verifiedStopId == stop.id && _verifyResult == _QrCheck.other;
+    final packages = stop.packages;
+    final totalVols = packages.length;
 
-    if (isScannedCurrent || isScannedOther) {
-      trackingLabel = _scannedBarcode!;
-    } else {
-      trackingLabel = barcodes.isNotEmpty
-          ? barcodes.join(' • ')
-          : 'ID #${stop.sequenceIndex} (Sem código vinculado)';
+    // Volume bipado agora (destacado no seu próprio card).
+    final hasScan = _scannedBarcode != null &&
+        _verifiedStopId == stop.id &&
+        (_verifyResult == _QrCheck.ok ||
+            _verifyResult == _QrCheck.far ||
+            _verifyResult == _QrCheck.noGps ||
+            _verifyResult == _QrCheck.other);
+    final scannedNorm = hasScan ? _scannedBarcode!.trim().toUpperCase() : null;
+
+    Widget packageCard(int i) {
+      final pkg = packages[i];
+      final code = pkg.barcode.trim();
+      final isDelivered = pkg.status == PackageStatus.delivered;
+      final isFailed = pkg.status == PackageStatus.failed;
+      final isScanned = scannedNorm != null &&
+          code.isNotEmpty &&
+          code.toUpperCase() == scannedNorm;
+
+      final borderColor = isDelivered
+          ? const Color(0xFF16A34A)
+          : (isFailed
+              ? const Color(0xFFDC2626)
+              : (isScanned ? AppColors.statusSuccess : cardBorder));
+
+      final bgColor = isDelivered
+          ? const Color(0xFF16A34A).withValues(alpha: isDark ? 0.12 : 0.06)
+          : (isFailed
+              ? const Color(0xFFDC2626).withValues(alpha: isDark ? 0.12 : 0.06)
+              : (isScanned
+                  ? AppColors.statusSuccess.withValues(alpha: 0.1)
+                  : (isDark ? AppColors.carbonSurfaceInput : AppColors.lightSurfaceInput)));
+
+      return Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        decoration: BoxDecoration(
+          color: bgColor,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: borderColor,
+            width: (isDelivered || isFailed || isScanned) ? 1.4 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isDelivered
+                  ? Icons.check_circle_rounded
+                  : (isFailed
+                      ? Icons.cancel_rounded
+                      : (isScanned
+                          ? Icons.qr_code_scanner_rounded
+                          : Icons.qr_code_2_rounded)),
+              size: 16,
+              color: isDelivered
+                  ? const Color(0xFF16A34A)
+                  : (isFailed
+                      ? const Color(0xFFDC2626)
+                      : (isScanned
+                          ? AppColors.statusSuccess
+                          : (isDark ? const Color(0xFF60A5FA) : const Color(0xFF2563EB)))),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              'RASTREIO: ',
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w900,
+                color: subColor,
+                letterSpacing: 0.5,
+              ),
+            ),
+            Expanded(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: onTapTracking,
+                child: Text(
+                  code.isNotEmpty
+                      ? code
+                      : 'ID #${stop.sequenceIndex} (Sem código vinculado)',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                    fontFamily: 'monospace',
+                    color: titleColor,
+                    letterSpacing: 0.5,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+            if (isScanned)
+              Container(
+                margin: const EdgeInsets.only(left: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF16A34A).withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.check, size: 10, color: Color(0xFF16A34A)),
+                    SizedBox(width: 2),
+                    Text(
+                      'BIPADO',
+                      style: TextStyle(
+                        fontSize: 8.5,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF16A34A),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      );
     }
+
+    final safeIndex = packages.isEmpty ? 0 : activePackageIndex.clamp(0, totalVols - 1);
+
+    final Widget packageCards = packages.isEmpty
+        ? GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: onTapTracking,
+            child: Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: cardBorder, width: 1),
+              ),
+              child: Text(
+                'ID #${stop.sequenceIndex} (Sem código vinculado)',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                  fontFamily: 'monospace',
+                  color: titleColor,
+                ),
+              ),
+            ),
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (totalVols > 1)
+                _buildVolumeSelector(
+                  isDark: isDark,
+                  packages: packages,
+                  activeIndex: safeIndex,
+                  onSelect: onSelectPackage,
+                ),
+              packageCard(safeIndex),
+            ],
+          );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -4507,76 +5050,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
             height: 1.35,
           ),
         ),
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onTapTracking,
-          child: Container(
-          width: double.infinity,
-          margin: const EdgeInsets.only(top: 10),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          decoration: BoxDecoration(
-            color: Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: cardBorder, width: 1),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(
-                Icons.qr_code_2_rounded,
-                size: 17,
-                color: isDark ? const Color(0xFF60A5FA) : const Color(0xFF2563EB),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                'RASTREIO:',
-                style: TextStyle(
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w900,
-                  color: subColor,
-                  letterSpacing: 0.6,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 300),
-                  child: Text(
-                    trackingLabel,
-                    key: ValueKey(trackingLabel),
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w800,
-                      fontFamily: 'monospace',
-                      color: titleColor,
-                      letterSpacing: 0.5,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ),
-              if (stop.packages.length > 1)
-                Container(
-                  margin: const EdgeInsets.only(left: 6),
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF2563EB).withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    '${stop.packages.length} vols',
-                    style: const TextStyle(
-                      fontSize: 9.5,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFF3B82F6),
-                    ),
-                  ),
-                ),
-            ],
-          ),
-          ),
-        ),
+        packageCards,
         _buildVerifyLine(isDark: isDark, stopId: stop.id),
         
         // Alerta de endereço divergente (bipagem fora de ordem ou longe)
@@ -4693,6 +5167,9 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     required int currentIndex,
     required int totalStops,
     required String timeLabel,
+    required int activePackageIndex,
+    required ValueChanged<int> onSelectPackage,
+    required void Function(PackageItem pkg, PackageStatus status) onUpdatePackageStatus,
     required VoidCallback onMarkFailed,
     required VoidCallback onMarkCompleted,
     required VoidCallback onUndo,
@@ -4748,71 +5225,84 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
             isSidePanel ? CrossAxisAlignment.stretch : CrossAxisAlignment.start,
         mainAxisSize: isSidePanel ? MainAxisSize.max : MainAxisSize.min,
         children: [
-          // Top Row: Status dot + Sequence/ETA + Close button
-          Row(
-            children: [
-              Container(
-                width: 9,
-                height: 9,
-                decoration: BoxDecoration(
-                  color: stop.status == StopStatus.completed
-                      ? const Color(0xFF16A34A)
-                      : (stop.status == StopStatus.failed
-                          ? const Color(0xFFDC2626)
-                          : const Color(0xFF2563EB)),
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                '${currentIndex + 1}/$totalStops, $timeLabel',
-                style: TextStyle(
-                  color: titleColor,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.2,
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
-              ),
-              if (!isSidePanel) const SizedBox(width: 6),
-              if (!isSidePanel)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: stop.status == StopStatus.completed
-                        ? const Color(0xFF16A34A)
-                        : (stop.status == StopStatus.failed
-                            ? const Color(0xFFDC2626)
-                            : const Color(0xFF2563EB)),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    stop.status == StopStatus.completed
-                        ? 'ENTREGUE'
-                        : (stop.status == StopStatus.failed
-                            ? 'NÃO ENTREGUE'
-                            : 'ROTA EM ANDAMENTO'),
-                    style: const TextStyle(
-                      fontSize: 9.5,
-                      fontWeight: FontWeight.w800,
-                      color: Colors.white,
-                      letterSpacing: 0.5,
+          Builder(
+            builder: (context) {
+              final currentPkg = (stop.packages.isNotEmpty && activePackageIndex < stop.packages.length)
+                  ? stop.packages[activePackageIndex]
+                  : null;
+              final isPkgDelivered = currentPkg != null
+                  ? currentPkg.status == PackageStatus.delivered
+                  : stop.status == StopStatus.completed;
+              final isPkgFailed = currentPkg != null
+                  ? currentPkg.status == PackageStatus.failed
+                  : stop.status == StopStatus.failed;
+              final dotColor = isPkgDelivered
+                  ? const Color(0xFF16A34A)
+                  : (isPkgFailed ? const Color(0xFFDC2626) : const Color(0xFF2563EB));
+              final badgeText = isPkgDelivered
+                  ? 'ENTREGUE'
+                  : (isPkgFailed ? 'NÃO ENTREGUE' : 'ROTA EM ANDAMENTO');
+
+              final volSuffix = stop.packages.length > 1
+                  ? ' • Vol ${activePackageIndex + 1}/${stop.packages.length}'
+                  : '';
+
+              return Row(
+                children: [
+                  Container(
+                    width: 9,
+                    height: 9,
+                    decoration: BoxDecoration(
+                      color: dotColor,
+                      shape: BoxShape.circle,
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      () {
+                        final timePart = timeLabel.isNotEmpty ? ', $timeLabel' : '';
+                        return '${currentIndex + 1}/$totalStops$timePart$volSuffix';
+                      }(),
+                      style: TextStyle(
+                        color: titleColor,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.2,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  if (!isSidePanel) const SizedBox(width: 6),
+                  if (!isSidePanel)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: dotColor,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        badgeText,
+                        style: const TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                    ),
+                const Spacer(),
+                InkWell(
+                  onTap: onClose,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(Icons.close, size: 18, color: subColor),
+                  ),
                 ),
-            const Spacer(),
-            InkWell(
-              onTap: onClose,
-              borderRadius: BorderRadius.circular(12),
-              child: Padding(
-                padding: const EdgeInsets.all(4),
-                child: Icon(Icons.close, size: 18, color: subColor),
-              ),
-            ),
-          ],
-        ),
+              ],
+            );
+          }),
         if (isSidePanel) ...[
           const SizedBox(height: 4),
           Align(
@@ -4856,7 +5346,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                 subColor: subColor,
                 cardBorder: cardBorder,
                 notes: notes,
+                activePackageIndex: activePackageIndex,
+                onSelectPackage: onSelectPackage,
                 onTapTracking: () => _toggleQrPip(open: true),
+                onUpdatePackageStatus: onUpdatePackageStatus,
               ),
             ),
           )
@@ -4869,10 +5362,13 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
             subColor: subColor,
             cardBorder: cardBorder,
             notes: notes,
+            activePackageIndex: activePackageIndex,
+            onSelectPackage: onSelectPackage,
             onTapTracking: () => _toggleQrPip(open: true),
+            onUpdatePackageStatus: onUpdatePackageStatus,
           ),
 
-          // As Ações do Card (Layout de 2 linhas limpo e sem truncamentos)
+          // Ações no rodapé do Card
           const SizedBox(height: 10),
           if (isFinalized) ...[
             Row(
@@ -4903,10 +5399,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                 Expanded(
                   child: _buildStopActionButton(
                     isDark: isDark,
-                    isSelected: stop.status == StopStatus.failed,
+                    isSelected: true,
                     disabled: false,
                     selectedColor: const Color(0xFFDC2626),
-                    icon: _failedDeliveryIcon(isDark),
+                    icon: const Icon(Icons.close_rounded, size: 16, color: Colors.white),
                     label: 'Não entregue',
                     onTap: onMarkFailed,
                   ),
@@ -4915,10 +5411,10 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
                 Expanded(
                   child: _buildStopActionButton(
                     isDark: isDark,
-                    isSelected: stop.status == StopStatus.completed,
+                    isSelected: true,
                     disabled: false,
                     selectedColor: const Color(0xFF16A34A),
-                    icon: _deliveredIcon(isDark),
+                    icon: const Icon(Icons.check_rounded, size: 16, color: Colors.white),
                     label: 'Entregue',
                     onTap: onMarkCompleted,
                   ),
@@ -4931,73 +5427,7 @@ class _HomeDashboardScreenState extends ConsumerState<HomeDashboardScreen>
     );
   }
 
-  Widget _failedDeliveryIcon(bool isDark) {
-    return SizedBox(
-      width: 22,
-      height: 20,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Center(
-            child: Icon(
-              Icons.inventory_2_outlined,
-              size: 19,
-              color: isDark ? Colors.white70 : AppColors.lightTextSecondary,
-            ),
-          ),
-          Positioned(
-            right: -1,
-            bottom: -1,
-            child: Container(
-              width: 10,
-              height: 10,
-              decoration: const BoxDecoration(
-                color: Color(0xFFDC2626),
-                shape: BoxShape.circle,
-              ),
-              child: const Center(
-                child: Icon(Icons.close, size: 7, color: Colors.white),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
-  Widget _deliveredIcon(bool isDark) {
-    return SizedBox(
-      width: 22,
-      height: 20,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          Center(
-            child: Icon(
-              Icons.inventory_2_outlined,
-              size: 19,
-              color: isDark ? Colors.white70 : AppColors.lightTextSecondary,
-            ),
-          ),
-          Positioned(
-            right: -1,
-            bottom: -1,
-            child: Container(
-              width: 10,
-              height: 10,
-              decoration: const BoxDecoration(
-                color: Color(0xFF43A047),
-                shape: BoxShape.circle,
-              ),
-              child: const Center(
-                child: Icon(Icons.check, size: 7, color: Colors.white),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _buildStopStatusVisualizer({
     required bool isDark,

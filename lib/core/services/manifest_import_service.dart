@@ -443,18 +443,8 @@ class ManifestImportService {
           : (null, null);
       final notes = cNotes >= 0 ? _cell(row, cNotes) : '';
 
-      final String groupKey;
-      if (fileLat != null && fileLng != null) {
-        final normRecipient = normalizeHeader(recipient);
-        final coordKey = '${fileLat.toStringAsFixed(4)}_${fileLng.toStringAsFixed(4)}';
-        groupKey = normRecipient.isNotEmpty ? '${normRecipient}_$coordKey' : 'COORD-$coordKey-$r';
-      } else if (addr1.isNotEmpty) {
-        final normRecipient = normalizeHeader(recipient);
-        final normAddr = normalizeHeader('$addr1 $num $city');
-        groupKey = normRecipient.isNotEmpty ? '${normRecipient}_$normAddr' : 'ADDR-$normAddr-$r';
-      } else {
-        groupKey = 'ROW-$r';
-      }
+      // Padrão Circuit: cada linha/pacote do manifesto é uma parada independente (1 pacote = 1 parada)
+      final String groupKey = 'ROW-$r';
 
       var sku = _cell(row, cSku);
       if (sku.isEmpty) {

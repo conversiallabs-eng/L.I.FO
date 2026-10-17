@@ -4,6 +4,7 @@ enum PackageStatus {
   pendingLoad,
   loaded,
   delivered,
+  failed,
 }
 
 class PackageItem {

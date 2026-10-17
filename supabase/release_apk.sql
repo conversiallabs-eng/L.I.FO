@@ -32,13 +32,17 @@ CREATE POLICY "Authenticated can read app_config"
   TO authenticated
   USING (true);
 
--- 2. Registrar versão publicada (v1.0.4 build 14) e Token Mapbox para Satélite
+-- 2. Registrar versão publicada (v1.0.4 build 16) e Token Mapbox para Satélite
 INSERT INTO public.app_config (key, value, updated_at)
 VALUES
   ('latest_version', '1.0.4',                                        now()),
-  ('latest_build',   '15',                                           now()),
+  ('latest_build',   '16',                                           now()),
   ('apk_url',        'https://lifo.com.br/lifo.apk',                  now()),
-  ('release_notes',  'Melhorias de desempenho, estabilidade na navegação e maior economia de bateria.', now()),
+  ('release_notes',  '1. Cada entrega é uma parada sequencial independente (1 a 98 estilo Circuit).' || E'\n' ||
+                     '2. Botões limpos com cores sólidas (Não entregue em vermelho, Entregue em verde).' || E'\n' ||
+                     '3. Previsão da próxima parada com média móvel das últimas 3 entregas (/3).' || E'\n' ||
+                     '4. Previsão de término da rota inteira com média acumulada de todas as entregas (/N).' || E'\n' ||
+                     '5. Mapa com preservação total de ruas e remoção de pontos de ônibus.', now()),
   ('mapbox_token',   convert_from(decode('cGsuZXlKMUlqb2libUZ1YjI1aGJtODJNVE1pTENKaElqb2lZMjEyT0dSM2EyazVNSE50YVRKNWJ6ZDVlVEprYTNNNFlpSjkuSVBNdWQwLVJiSkpDWjdQQVhCaUNQdw==', 'base64'), 'UTF-8'), now())
 ON CONFLICT (key) DO UPDATE
   SET value = EXCLUDED.value, updated_at = now();

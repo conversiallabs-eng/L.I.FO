@@ -21,6 +21,7 @@ class DeliveryStop {
   final String? timeWindow;
   final String? notes;
   final List<PackageItem> packages;
+  final DateTime? completedAt;
 
   const DeliveryStop({
     required this.id,
@@ -35,15 +36,24 @@ class DeliveryStop {
     this.timeWindow,
     this.notes,
     this.packages = const [],
+    this.completedAt,
   });
 
   bool get isAllPackagesLoaded {
     if (packages.isEmpty) return false;
-    return packages.every((p) => p.status == PackageStatus.loaded || p.status == PackageStatus.delivered);
+    return packages.every((p) =>
+        p.status == PackageStatus.loaded ||
+        p.status == PackageStatus.delivered ||
+        p.status == PackageStatus.failed);
   }
 
   int get loadedPackagesCount {
-    return packages.where((p) => p.status == PackageStatus.loaded || p.status == PackageStatus.delivered).length;
+    return packages
+        .where((p) =>
+            p.status == PackageStatus.loaded ||
+            p.status == PackageStatus.delivered ||
+            p.status == PackageStatus.failed)
+        .length;
   }
 
   DeliveryStop copyWith({
@@ -59,6 +69,8 @@ class DeliveryStop {
     String? timeWindow,
     String? notes,
     List<PackageItem>? packages,
+    DateTime? completedAt,
+    bool clearCompletedAt = false,
   }) {
     return DeliveryStop(
       id: id ?? this.id,
@@ -73,6 +85,7 @@ class DeliveryStop {
       timeWindow: timeWindow ?? this.timeWindow,
       notes: notes ?? this.notes,
       packages: packages ?? this.packages,
+      completedAt: clearCompletedAt ? null : (completedAt ?? this.completedAt),
     );
   }
 
@@ -89,6 +102,7 @@ class DeliveryStop {
       'spatial_slot': spatialSlot.label,
       'time_window': timeWindow,
       'notes': notes,
+      'completed_at': completedAt?.toIso8601String(),
     };
   }
 
@@ -106,6 +120,7 @@ class DeliveryStop {
       timeWindow: map['time_window'] as String?,
       notes: map['notes'] as String?,
       packages: packages,
+      completedAt: map['completed_at'] != null ? DateTime.tryParse(map['completed_at'] as String) : null,
     );
   }
 }
